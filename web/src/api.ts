@@ -120,6 +120,27 @@ export const backupsApi = {
     api.post<{ status: string; path: string; backup: BackupSummary }>(`/backups/${backupId}/run`),
 };
 
+// Preview deployments (M9). `deploy` pushes an app's chosen branch into an
+// ephemeral, isolated orcinus project (per-branch/PR) and returns the tracking
+// deployment id + the generated preview project name; `teardown` removes that
+// environment. NOTE: the backend does NOT persist or list previews — there is
+// no GET route — so the UI tracks triggered previews in-session only and follows
+// their progress via the returned deploymentId (GET /deployments/{id}). Teardown
+// is keyed by project + branch, not by app.
+export interface PreviewDeploy {
+  deploymentId: string;
+  previewProject: string;
+  branch: string;
+  status: string;
+}
+
+export const previewApi = {
+  deploy: (appId: string, branch: string) =>
+    api.post<PreviewDeploy>(`/apps/${appId}/preview`, { branch }),
+  teardown: (projectId: string, branch: string) =>
+    api.del(`/projects/${projectId}/preview/${encodeURIComponent(branch)}`),
+};
+
 // Raw text fetch (used for log streaming / plain-text responses).
 export async function getText(path: string): Promise<string> {
   const res = await fetch(BASE + path, {

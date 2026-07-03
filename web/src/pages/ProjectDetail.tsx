@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useParams, useSearchParams } from "react-router-dom";
-import { Eye, EyeOff, Globe, Loader2, Plus, Trash2 } from "lucide-react";
-import { api, streamText, secretsApi, backupsApi, saveAppEnv, saveAppDomain, type SecretSummary, type BackupSummary, type BackupCreate } from "../api";
+import { Eye, EyeOff, GitBranch, Globe, Loader2, Plus, Trash2 } from "lucide-react";
+import { api, streamText, secretsApi, backupsApi, previewApi, saveAppEnv, saveAppDomain, type SecretSummary, type BackupSummary, type BackupCreate } from "../api";
 import { Card, Empty, ErrorBox, StatusPill } from "../ui";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -148,6 +148,14 @@ function Applications({ projectId }: { projectId: string }) {
   const [confirmState, setConfirmState] = useState<ConfirmState>(null);
   const [scaleTarget, setScaleTarget] = useState<any | null>(null);
   const [replicas, setReplicas] = useState("2");
+  // Ephemeral per-branch preview environments (M9). The backend doesn't list
+  // previews, so we track the ones triggered this session and follow each via
+  // its deployment id; teardown is keyed by project + branch.
+  const [previews, setPreviews] = useState<PreviewEntry[]>([]);
+  const [previewTarget, setPreviewTarget] = useState<any | null>(null);
+  const [previewBranch, setPreviewBranch] = useState("");
+  const [previewBusy, setPreviewBusy] = useState(false);
+  const [openDeployId, setOpenDeployId] = useState<string | null>(null);
 
   async function load() {
     const r = await api.get(`/projects/${projectId}/apps`);
@@ -212,6 +220,42 @@ function Applications({ projectId }: { projectId: string }) {
       },
     });
   }
+  function askPreview(a: any) {
+    setPreviewTarget(a);
+    setPreviewBranch(a.branch || "main");
+  }
+  async function doPreview() {
+    if (!previewTarget) return;
+    const branch = previewBranch.trim();
+    if (!branch) { toast.error("Enter a branch to preview"); return; }
+    setPreviewBusy(true);
+    try {
+      const r = await previewApi.deploy(previewTarget.id, branch);
+      const key = `${previewTarget.id}:${branch}`;
+      setPreviews((prev) => [
+        ...prev.filter((p) => p.key !== key),
+        { key, appId: previewTarget.id, appName: previewTarget.name, branch, deploymentId: r.deploymentId, previewProject: r.previewProject },
+      ]);
+      toast.success(`Preview deploying: ${previewTarget.name} @ ${branch}`);
+      setPreviewTarget(null);
+    } catch (e) { toast.error((e as Error).message); }
+    finally { setPreviewBusy(false); }
+  }
+  function askTeardown(p: PreviewEntry) {
+    setConfirmState({
+      title: "Tear down preview?",
+      description: `The ephemeral environment "${p.previewProject}" (${p.appName} @ ${p.branch}) will be removed from the cluster.`,
+      confirmLabel: "Tear down",
+      variant: "destructive",
+      onConfirm: async () => {
+        try {
+          await previewApi.teardown(projectId, p.branch);
+          setPreviews((prev) => prev.filter((x) => x.key !== p.key));
+          toast.success(`Torn down ${p.previewProject}`);
+        } catch (e) { toast.error((e as Error).message); }
+      },
+    });
+  }
 
   return (
     <>
@@ -237,6 +281,7 @@ function Applications({ projectId }: { projectId: string }) {
                   <TableCell>
                     <div className="flex justify-end gap-1.5">
                       <Button size="sm" disabled={busy === a.id} onClick={() => deploy(a)}>Deploy</Button>
+                      <Button size="sm" variant="secondary" onClick={() => askPreview(a)}><GitBranch className="size-4" />Preview</Button>
                       <Button size="sm" variant="secondary" onClick={() => { setScaleTarget(a); setReplicas("2"); }}>Scale</Button>
                       <Button size="sm" variant="secondary" onClick={() => askRollback(a)}>Rollback</Button>
                       <Button size="icon" variant="destructive" onClick={() => askDelete(a)}><Trash2 className="size-4" /></Button>
@@ -248,6 +293,41 @@ function Applications({ projectId }: { projectId: string }) {
           </Table>
         )}
       </Card>
+      {previews.length > 0 && (
+        <Card title="Preview environments">
+          <p className="mb-3 text-xs text-muted-foreground">
+            Ephemeral per-branch deployments, isolated from the main project. Tracked for this session only —
+            the cluster doesn't report existing previews back, so this list clears on reload.
+          </p>
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Application</TableHead>
+                <TableHead>Branch</TableHead>
+                <TableHead>Preview project</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead className="w-0" />
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {previews.map((p) => (
+                <TableRow key={p.key}>
+                  <TableCell className="font-medium">{p.appName}</TableCell>
+                  <TableCell className="font-mono text-xs">{p.branch}</TableCell>
+                  <TableCell className="font-mono text-xs text-muted-foreground">{p.previewProject}</TableCell>
+                  <TableCell><PreviewStatus deploymentId={p.deploymentId} /></TableCell>
+                  <TableCell>
+                    <div className="flex justify-end gap-1.5">
+                      <Button size="sm" variant="ghost" onClick={() => setOpenDeployId(p.deploymentId)}>View log</Button>
+                      <Button size="sm" variant="destructive" onClick={() => askTeardown(p)}>Tear down</Button>
+                    </div>
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </Card>
+      )}
       <Card title="New application">
         <ErrorBox error={err} />
         <div className="grid gap-4 md:grid-cols-2">
@@ -337,7 +417,61 @@ function Applications({ projectId }: { projectId: string }) {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      <Dialog open={!!previewTarget} onOpenChange={(o) => { if (!o && !previewBusy) setPreviewTarget(null); }}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Deploy preview · {previewTarget?.name}</DialogTitle>
+            <DialogDescription>
+              Spins up an isolated, ephemeral environment for the chosen branch, separate from the live project.
+            </DialogDescription>
+          </DialogHeader>
+          <div>
+            <Label>Branch</Label>
+            <Input value={previewBranch} onChange={(e) => setPreviewBranch(e.target.value)} placeholder="feature/my-branch" autoFocus onKeyDown={(e) => { if (e.key === "Enter") doPreview(); }} />
+          </div>
+          <DialogFooter>
+            <Button variant="secondary" onClick={() => setPreviewTarget(null)} disabled={previewBusy}>Cancel</Button>
+            <Button onClick={doPreview} disabled={previewBusy || !previewBranch.trim()}>
+              {previewBusy ? <><Loader2 className="size-4 animate-spin" />Deploying…</> : "Deploy preview"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      <DeploymentDrawer deploymentId={openDeployId} onClose={() => setOpenDeployId(null)} />
     </>
+  );
+}
+
+// A tracked preview environment (session-only — the backend doesn't list them).
+type PreviewEntry = { key: string; appId: string; appName: string; branch: string; deploymentId: string; previewProject: string };
+
+// Follows a preview's build/deploy status by polling its deployment while the
+// deployment is still in flight, mirroring DeploymentDrawer's poll guards.
+function PreviewStatus({ deploymentId }: { deploymentId: string }) {
+  const [status, setStatus] = useState("pending");
+  useEffect(() => {
+    const ctrl = new AbortController();
+    let active = true;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    async function tick() {
+      try {
+        const d = await api.get(`/deployments/${deploymentId}`, ctrl.signal);
+        if (!active) return;
+        setStatus(d.status);
+        if (DEPLOY_LIVE.has(d.status)) timer = setTimeout(tick, DEPLOY_POLL_MS);
+      } catch (e) {
+        if (!active || (e as Error).name === "AbortError") return;
+      }
+    }
+    tick();
+    return () => { active = false; ctrl.abort(); if (timer) clearTimeout(timer); };
+  }, [deploymentId]);
+  const live = DEPLOY_LIVE.has(status);
+  return (
+    <span className="flex items-center gap-2">
+      <StatusPill status={status} />
+      {live && <Loader2 className="size-3.5 animate-spin text-muted-foreground" />}
+    </span>
   );
 }
 
