@@ -74,6 +74,15 @@ export function saveAppEnv(appId: string, env: Record<string, string>, secretKey
   return api.put(`/apps/${appId}`, { env, secretKeys });
 }
 
+// Persist an application's ingress domain + TLS. Unlike env, `domain`/`tls`
+// ARE returned by the app list/get (json:"domain"/"tls"), so the UI can read
+// current values back. Update is via PUT /apps/{id}. NOTE: the backend keeps
+// the existing domain when an empty string is sent (orDefault), so a domain can
+// be changed but not fully cleared through this call — `tls` is always applied.
+export function saveAppDomain(appId: string, domain: string, tls: boolean) {
+  return api.put(`/apps/${appId}`, { domain, tls });
+}
+
 // Raw text fetch (used for log streaming / plain-text responses).
 export async function getText(path: string): Promise<string> {
   const res = await fetch(BASE + path, {

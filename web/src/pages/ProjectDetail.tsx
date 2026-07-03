@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { useParams, useSearchParams } from "react-router-dom";
-import { Eye, EyeOff, Loader2, Plus, Trash2 } from "lucide-react";
-import { api, streamText, secretsApi, saveAppEnv, type SecretSummary } from "../api";
+import { Eye, EyeOff, Globe, Loader2, Plus, Trash2 } from "lucide-react";
+import { api, streamText, secretsApi, saveAppEnv, saveAppDomain, type SecretSummary } from "../api";
 import { Card, Empty, ErrorBox, StatusPill } from "../ui";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -16,8 +17,8 @@ import { toast } from "@/components/ui/sonner";
 
 interface Project { id: string; name: string; orcinusProject: string; }
 
-const TABS = ["overview", "applications", "databases", "config", "compose", "deployments", "logs", "templates", "backups"];
-const TAB_LABELS: Record<string, string> = { config: "Env & Secrets" };
+const TABS = ["overview", "applications", "databases", "config", "domains", "compose", "deployments", "logs", "templates", "backups"];
+const TAB_LABELS: Record<string, string> = { config: "Env & Secrets", domains: "Domains & TLS" };
 
 export function ProjectDetailPage() {
   const { id = "" } = useParams();
@@ -48,6 +49,7 @@ export function ProjectDetailPage() {
       {tab === "applications" && <Applications projectId={id} />}
       {tab === "databases" && <Databases projectId={id} />}
       {tab === "config" && <EnvSecrets projectId={id} />}
+      {tab === "domains" && <DomainsTLS projectId={id} />}
       {tab === "compose" && <Compose projectId={id} />}
       {tab === "deployments" && <Deployments projectId={id} />}
       {tab === "logs" && <Logs projectId={id} />}
@@ -957,6 +959,173 @@ function ClusterSecrets() {
           <DialogFooter>
             <Button variant="secondary" onClick={close} disabled={busy}>Cancel</Button>
             <Button onClick={save} disabled={busy}>{busy ? "Saving…" : "Save secret"}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      <ConfirmDialog state={confirmState} onClose={() => setConfirmState(null)} />
+    </Card>
+  );
+}
+
+// ---- Domains & TLS (M4) -----------------------------------------------------
+// Each application carries a single ingress domain (`domain`) + a `tls` flag.
+// Both ARE serialized by the app list/get (json:"domain"/"tls"), so — unlike
+// env — current values can be read back and prefilled. Update is a PUT
+// /apps/{id} {domain, tls}. Backend caveats worth knowing:
+//   • One domain per app (no multi-domain / no separate Domain entity), so this
+//     surface lists each app's single host — "add" sets it, "edit" changes it.
+//   • orDefault on the backend keeps the old domain when an empty string is
+//     sent, so "Remove" reliably disables TLS but the host itself may persist
+//     server-side until a real value replaces it (tracked as a backend gap).
+//   • No cert-status field/endpoint exists; certificate state below is DERIVED
+//     from domain+tls (cert-manager/ACME does the actual issuance out-of-band).
+
+// certStatus maps an app's domain+tls into a badge label + variant. Honest
+// derivation only — the backend doesn't report real ACME issuance state.
+function certStatus(app: any): { label: string; variant: "success" | "warning" | "outline" } {
+  if (!app.domain) return { label: "No domain", variant: "outline" };
+  if (!app.tls) return { label: "HTTP only", variant: "warning" };
+  return { label: "TLS · ACME managed", variant: "success" };
+}
+
+function DomainsTLS({ projectId }: { projectId: string }) {
+  const [apps, setApps] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState<string | null>(null);
+  const [editing, setEditing] = useState<{ app: any; host: string; tls: boolean } | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [confirmState, setConfirmState] = useState<ConfirmState>(null);
+
+  async function load() {
+    setLoading(true); setErr(null);
+    try { const r = await api.get(`/projects/${projectId}/apps`); setApps(r.applications || []); }
+    catch (e) { const m = (e as Error).message; setErr(m); toast.error("Failed to load apps: " + m); }
+    finally { setLoading(false); }
+  }
+  useEffect(() => { load(); }, [projectId]);
+
+  function openEdit(app: any) { setEditing({ app, host: app.domain || "", tls: !!app.tls }); }
+  function close() { if (busy) return; setEditing(null); }
+
+  async function save() {
+    if (!editing) return;
+    const host = editing.host.trim();
+    if (!host) { toast.error("Enter a domain host"); return; }
+    setBusy(true);
+    try {
+      await saveAppDomain(editing.app.id, host, editing.tls);
+      toast.success(`Domain saved for ${editing.app.name}`);
+      setEditing(null);
+      load();
+    } catch (e) { toast.error((e as Error).message); }
+    finally { setBusy(false); }
+  }
+
+  function askRemove(app: any) {
+    setConfirmState({
+      title: "Remove domain?",
+      description: `Detach ${app.domain} from "${app.name}" and disable TLS for it.`,
+      confirmLabel: "Remove",
+      variant: "destructive",
+      onConfirm: async () => {
+        try { await saveAppDomain(app.id, "", false); toast.success("Removed domain from " + app.name); load(); }
+        catch (e) { toast.error((e as Error).message); }
+      },
+    });
+  }
+
+  return (
+    <Card title="Domains & TLS">
+      <p className="mb-3 text-xs text-muted-foreground">
+        Each application exposes one ingress host. Toggle TLS to have cert-manager/ACME issue a certificate for the
+        host. Certificate state is derived from the domain + TLS setting — the backend doesn't report live issuance.
+      </p>
+      {loading ? (
+        <div className="text-sm text-muted-foreground">loading…</div>
+      ) : err ? (
+        <ErrorBox error={err} />
+      ) : apps.length === 0 ? (
+        <Empty text="No applications yet — create one first." />
+      ) : (
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Application</TableHead>
+              <TableHead>Host</TableHead>
+              <TableHead>TLS</TableHead>
+              <TableHead>Certificate</TableHead>
+              <TableHead className="w-0" />
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {apps.map((a) => {
+              const cert = certStatus(a);
+              return (
+                <TableRow key={a.id}>
+                  <TableCell className="font-medium">{a.name}</TableCell>
+                  <TableCell>
+                    {a.domain ? (
+                      <a
+                        href={`${a.tls ? "https" : "http"}://${a.domain}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="font-mono text-xs text-primary hover:underline"
+                      >
+                        {a.domain}
+                      </a>
+                    ) : (
+                      <span className="text-muted-foreground">—</span>
+                    )}
+                  </TableCell>
+                  <TableCell>
+                    <Badge variant={a.tls ? "success" : "outline"}>{a.tls ? "on" : "off"}</Badge>
+                  </TableCell>
+                  <TableCell><Badge variant={cert.variant}>{cert.label}</Badge></TableCell>
+                  <TableCell>
+                    <div className="flex justify-end gap-1.5">
+                      {a.domain ? (
+                        <>
+                          <Button size="sm" variant="secondary" onClick={() => openEdit(a)}>Edit</Button>
+                          <Button size="icon" variant="destructive" onClick={() => askRemove(a)} aria-label="Remove domain"><Trash2 className="size-4" /></Button>
+                        </>
+                      ) : (
+                        <Button size="sm" onClick={() => openEdit(a)}><Globe /> Add domain</Button>
+                      )}
+                    </div>
+                  </TableCell>
+                </TableRow>
+              );
+            })}
+          </TableBody>
+        </Table>
+      )}
+
+      <Dialog open={!!editing} onOpenChange={(o) => { if (!o) close(); }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>{editing?.app?.domain ? "Edit domain" : "Add domain"}</DialogTitle>
+            <DialogDescription>
+              Route a hostname to <span className="font-medium text-foreground">{editing?.app?.name}</span> via ingress.
+              Point the host's DNS at the cluster, then enable TLS for an ACME-issued certificate.
+            </DialogDescription>
+          </DialogHeader>
+          <div>
+            <Label>Host</Label>
+            <Input
+              value={editing?.host || ""}
+              onChange={(e) => setEditing((ed) => (ed ? { ...ed, host: e.target.value } : ed))}
+              placeholder="app.example.com"
+              className="font-mono"
+              autoFocus
+            />
+          </div>
+          <label className="flex cursor-pointer select-none items-center gap-2 text-sm">
+            <Checkbox checked={!!editing?.tls} onCheckedChange={(v) => setEditing((ed) => (ed ? { ...ed, tls: v === true } : ed))} />
+            <span>Enable TLS (cert-manager / ACME)</span>
+          </label>
+          <DialogFooter>
+            <Button variant="secondary" onClick={close} disabled={busy}>Cancel</Button>
+            <Button onClick={save} disabled={busy}>{busy ? "Saving…" : "Save domain"}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
