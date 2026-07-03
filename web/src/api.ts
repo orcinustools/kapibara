@@ -51,6 +51,29 @@ export const api = {
   del: <T = any>(p: string, b?: any) => req<T>("DELETE", p, b),
 };
 
+// Cluster secrets. The list endpoint returns only a name + key COUNT — the
+// values are never sent back, so secret values are inherently masked. PUT
+// replaces the whole data map for a given name (create-or-update); there is no
+// per-key merge server-side.
+export interface SecretSummary {
+  name: string;
+  keys: number;
+}
+
+export const secretsApi = {
+  list: (signal?: AbortSignal) =>
+    api.get<{ secrets: SecretSummary[] }>("/secrets", signal).then((r) => r.secrets || []),
+  put: (name: string, data: Record<string, string>) => api.post("/secrets", { name, data }),
+  del: (name: string) => api.del(`/secrets/${encodeURIComponent(name)}`),
+};
+
+// Persist an application's environment variables + which keys are secret. Env
+// and secretKeys are write-only on the backend (json:"-"), so this is a
+// set-on-save (replace) operation — sending both fields fully replaces them.
+export function saveAppEnv(appId: string, env: Record<string, string>, secretKeys: string[]) {
+  return api.put(`/apps/${appId}`, { env, secretKeys });
+}
+
 // Raw text fetch (used for log streaming / plain-text responses).
 export async function getText(path: string): Promise<string> {
   const res = await fetch(BASE + path, {

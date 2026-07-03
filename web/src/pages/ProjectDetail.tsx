@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useParams, useSearchParams } from "react-router-dom";
-import { Loader2, Trash2 } from "lucide-react";
-import { api, streamText } from "../api";
+import { Eye, EyeOff, Loader2, Plus, Trash2 } from "lucide-react";
+import { api, streamText, secretsApi, saveAppEnv, type SecretSummary } from "../api";
 import { Card, Empty, ErrorBox, StatusPill } from "../ui";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -16,7 +16,8 @@ import { toast } from "@/components/ui/sonner";
 
 interface Project { id: string; name: string; orcinusProject: string; }
 
-const TABS = ["overview", "applications", "databases", "compose", "deployments", "logs", "templates", "backups"];
+const TABS = ["overview", "applications", "databases", "config", "compose", "deployments", "logs", "templates", "backups"];
+const TAB_LABELS: Record<string, string> = { config: "Env & Secrets" };
 
 export function ProjectDetailPage() {
   const { id = "" } = useParams();
@@ -39,13 +40,14 @@ export function ProjectDetailPage() {
         <span className="font-mono text-xs text-muted-foreground">{project.orcinusProject}</span>
       </div>
       <TabBar
-        tabs={TABS.map((t) => ({ key: t, label: t[0].toUpperCase() + t.slice(1) }))}
+        tabs={TABS.map((t) => ({ key: t, label: TAB_LABELS[t] || t[0].toUpperCase() + t.slice(1) }))}
         active={tab}
         onSelect={(t) => setSp({ tab: t })}
       />
       {tab === "overview" && <Overview projectId={id} />}
       {tab === "applications" && <Applications projectId={id} />}
       {tab === "databases" && <Databases projectId={id} />}
+      {tab === "config" && <EnvSecrets projectId={id} />}
       {tab === "compose" && <Compose projectId={id} />}
       {tab === "deployments" && <Deployments projectId={id} />}
       {tab === "logs" && <Logs projectId={id} />}
@@ -677,6 +679,289 @@ function Backups({ projectId }: { projectId: string }) {
         <div><Button className="mt-3" onClick={create} disabled={!dbId}>Create (local)</Button></div>
       </Card>
     </>
+  );
+}
+
+// ---- Env & Secrets (M4) -----------------------------------------------------
+// Two surfaces live under the "Env & Secrets" tab:
+//   • AppEnvEditor — per-app KEY=VALUE rows with a per-row "secret" flag (masks
+//     the value + adds the key to the app's secretKeys). Env/secretKeys are
+//     write-only on the backend (json:"-"), so this is SET-ON-SAVE: saving
+//     replaces the app's whole environment and existing values are never read
+//     back (by design — secret values must not leak).
+//   • ClusterSecrets — full CRUD against /secrets. The list exposes only a key
+//     COUNT per secret (never the values), so secret values stay masked; a PUT
+//     replaces all keys of a secret.
+
+let rowSeq = 0;
+const nextRowId = () => ++rowSeq;
+type KVRow = { id: number; key: string; value: string; secret: boolean; reveal: boolean };
+const blankRow = (): KVRow => ({ id: nextRowId(), key: "", value: "", secret: false, reveal: false });
+
+function EnvSecrets({ projectId }: { projectId: string }) {
+  return (
+    <>
+      <AppEnvEditor projectId={projectId} />
+      <ClusterSecrets />
+    </>
+  );
+}
+
+function AppEnvEditor({ projectId }: { projectId: string }) {
+  const [apps, setApps] = useState<any[]>([]);
+  const [appId, setAppId] = useState("");
+  const [rows, setRows] = useState<KVRow[]>([]);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    api.get(`/projects/${projectId}/apps`)
+      .then((r) => setApps(r.applications || []))
+      .catch((e) => toast.error("Failed to load apps: " + (e as Error).message));
+  }, [projectId]);
+
+  function selectApp(id: string) {
+    setAppId(id);
+    setRows(id ? [blankRow()] : []); // env is write-only → start from a blank row
+  }
+  function setRow(id: number, patch: Partial<KVRow>) {
+    setRows((rs) => rs.map((r) => (r.id === id ? { ...r, ...patch } : r)));
+  }
+  function addRow() { setRows((rs) => [...rs, blankRow()]); }
+  function removeRow(id: number) { setRows((rs) => rs.filter((r) => r.id !== id)); }
+
+  async function save() {
+    const filled = rows.filter((r) => r.key.trim());
+    const keys = filled.map((r) => r.key.trim());
+    if (new Set(keys).size !== keys.length) { toast.error("Duplicate variable names"); return; }
+    const env: Record<string, string> = {};
+    const secretKeys: string[] = [];
+    for (const r of filled) {
+      env[r.key.trim()] = r.value;
+      if (r.secret) secretKeys.push(r.key.trim());
+    }
+    setBusy(true);
+    try {
+      await saveAppEnv(appId, env, secretKeys);
+      toast.success(`Saved ${filled.length} variable${filled.length === 1 ? "" : "s"}`);
+    } catch (e) { toast.error((e as Error).message); }
+    finally { setBusy(false); }
+  }
+
+  const selected = apps.find((a) => a.id === appId);
+  return (
+    <Card title="Application environment">
+      {apps.length === 0 ? (
+        <Empty text="No applications yet — create one first." />
+      ) : (
+        <>
+          <div className="max-w-sm">
+            <Label>Application</Label>
+            <Select value={appId} onChange={(e) => selectApp(e.target.value)}>
+              <option value="">select an application…</option>
+              {apps.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+            </Select>
+          </div>
+          {selected && (
+            <div className="mt-4">
+              <p className="mb-3 text-xs text-muted-foreground">
+                Set the environment for <span className="font-medium text-foreground">{selected.name}</span>. Mark a row{" "}
+                <em>secret</em> to mask its value and store the key as a cluster Secret. Saving replaces the app's full
+                environment — stored values aren't shown back for security.
+              </p>
+              <div className="space-y-2">
+                {rows.map((r) => (
+                  <div key={r.id} className="flex items-center gap-2">
+                    <Input placeholder="KEY" value={r.key} onChange={(e) => setRow(r.id, { key: e.target.value })} className="max-w-[220px] font-mono" />
+                    <span className="text-muted-foreground">=</span>
+                    <div className="relative flex-1">
+                      <Input
+                        type={r.secret && !r.reveal ? "password" : "text"}
+                        placeholder="value"
+                        value={r.value}
+                        onChange={(e) => setRow(r.id, { value: e.target.value })}
+                        className="pr-9 font-mono"
+                      />
+                      {r.secret && (
+                        <button
+                          type="button"
+                          onClick={() => setRow(r.id, { reveal: !r.reveal })}
+                          className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                          aria-label={r.reveal ? "Hide value" : "Reveal value"}
+                        >
+                          {r.reveal ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+                        </button>
+                      )}
+                    </div>
+                    <label className="flex cursor-pointer select-none items-center gap-1.5 text-xs text-muted-foreground">
+                      <Checkbox checked={r.secret} onCheckedChange={(v) => setRow(r.id, { secret: v === true })} />
+                      secret
+                    </label>
+                    <Button size="icon" variant="ghost" onClick={() => removeRow(r.id)} aria-label="Remove variable"><Trash2 className="size-4" /></Button>
+                  </div>
+                ))}
+              </div>
+              <div className="mt-3 flex gap-2">
+                <Button variant="outline" size="sm" onClick={addRow}><Plus /> Add variable</Button>
+                <Button size="sm" onClick={save} disabled={busy}>{busy ? "Saving…" : "Save environment"}</Button>
+              </div>
+            </div>
+          )}
+        </>
+      )}
+    </Card>
+  );
+}
+
+function ClusterSecrets() {
+  const [secrets, setSecrets] = useState<SecretSummary[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState<string | null>(null);
+  const [editing, setEditing] = useState<{ name: string; isNew: boolean } | null>(null);
+  const [rows, setRows] = useState<KVRow[]>([]);
+  const [busy, setBusy] = useState(false);
+  const [confirmState, setConfirmState] = useState<ConfirmState>(null);
+
+  async function load() {
+    setLoading(true); setErr(null);
+    try { setSecrets(await secretsApi.list()); }
+    catch (e) { const m = (e as Error).message; setErr(m); toast.error("Failed to load secrets: " + m); }
+    finally { setLoading(false); }
+  }
+  useEffect(() => { load(); }, []);
+
+  function openNew() { setEditing({ name: "", isNew: true }); setRows([blankRow()]); }
+  function openEdit(s: SecretSummary) { setEditing({ name: s.name, isNew: false }); setRows([blankRow()]); }
+  function close() { if (busy) return; setEditing(null); setRows([]); }
+  function setRow(id: number, patch: Partial<KVRow>) { setRows((rs) => rs.map((r) => (r.id === id ? { ...r, ...patch } : r))); }
+  function addRow() { setRows((rs) => [...rs, blankRow()]); }
+  function removeRow(id: number) { setRows((rs) => rs.filter((r) => r.id !== id)); }
+
+  async function save() {
+    if (!editing) return;
+    const name = editing.name.trim();
+    if (!name) { toast.error("Secret name required"); return; }
+    const filled = rows.filter((r) => r.key.trim());
+    if (filled.length === 0) { toast.error("Add at least one key"); return; }
+    const keys = filled.map((r) => r.key.trim());
+    if (new Set(keys).size !== keys.length) { toast.error("Duplicate keys"); return; }
+    const data: Record<string, string> = {};
+    for (const r of filled) data[r.key.trim()] = r.value;
+    setBusy(true);
+    try {
+      await secretsApi.put(name, data);
+      toast.success(`Saved secret ${name}`);
+      setEditing(null); setRows([]);
+      load();
+    } catch (e) { toast.error((e as Error).message); }
+    finally { setBusy(false); }
+  }
+
+  function askDelete(s: SecretSummary) {
+    setConfirmState({
+      title: "Delete secret?",
+      description: `"${s.name}" and all its keys will be removed from the cluster. This cannot be undone.`,
+      confirmLabel: "Delete",
+      variant: "destructive",
+      onConfirm: async () => {
+        try { await secretsApi.del(s.name); toast.success("Deleted " + s.name); load(); }
+        catch (e) { toast.error((e as Error).message); }
+      },
+    });
+  }
+
+  return (
+    <Card title="Secrets">
+      <p className="mb-3 text-xs text-muted-foreground">
+        Cluster secrets available to apps. Values are write-only — the list shows only how many keys each holds. Saving a
+        secret replaces all of its keys.
+      </p>
+      {loading ? (
+        <div className="text-sm text-muted-foreground">loading…</div>
+      ) : err ? (
+        <ErrorBox error={err} />
+      ) : secrets.length === 0 ? (
+        <Empty text="No secrets yet." />
+      ) : (
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Name</TableHead>
+              <TableHead>Keys</TableHead>
+              <TableHead className="w-0" />
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {secrets.map((s) => (
+              <TableRow key={s.name} className="cursor-pointer" title="Replace keys" onClick={() => openEdit(s)}>
+                <TableCell className="font-mono">{s.name}</TableCell>
+                <TableCell className="text-muted-foreground">{s.keys}</TableCell>
+                <TableCell>
+                  <div className="flex justify-end">
+                    <Button size="icon" variant="destructive" onClick={(e) => { e.stopPropagation(); askDelete(s); }} aria-label="Delete secret"><Trash2 className="size-4" /></Button>
+                  </div>
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      )}
+      <div className="mt-3"><Button size="sm" onClick={openNew}><Plus /> New secret</Button></div>
+
+      <Dialog open={!!editing} onOpenChange={(o) => { if (!o) close(); }}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>{editing?.isNew ? "New secret" : `Edit ${editing?.name}`}</DialogTitle>
+            <DialogDescription>
+              {editing?.isNew
+                ? "Create a cluster secret with one or more keys."
+                : "Re-enter every key — saving replaces the secret's full contents."}
+            </DialogDescription>
+          </DialogHeader>
+          <div>
+            <Label>Name</Label>
+            <Input
+              value={editing?.name || ""}
+              onChange={(e) => setEditing((ed) => (ed ? { ...ed, name: e.target.value } : ed))}
+              disabled={!editing?.isNew}
+              placeholder="my-secret"
+              className="font-mono"
+            />
+          </div>
+          <div className="space-y-2">
+            {rows.map((r) => (
+              <div key={r.id} className="flex items-center gap-2">
+                <Input placeholder="KEY" value={r.key} onChange={(e) => setRow(r.id, { key: e.target.value })} className="max-w-[180px] font-mono" />
+                <span className="text-muted-foreground">=</span>
+                <div className="relative flex-1">
+                  <Input
+                    type={r.reveal ? "text" : "password"}
+                    placeholder="value"
+                    value={r.value}
+                    onChange={(e) => setRow(r.id, { value: e.target.value })}
+                    className="pr-9 font-mono"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setRow(r.id, { reveal: !r.reveal })}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                    aria-label={r.reveal ? "Hide value" : "Reveal value"}
+                  >
+                    {r.reveal ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+                  </button>
+                </div>
+                <Button size="icon" variant="ghost" onClick={() => removeRow(r.id)} aria-label="Remove key"><Trash2 className="size-4" /></Button>
+              </div>
+            ))}
+          </div>
+          <Button variant="outline" size="sm" className="w-fit" onClick={addRow}><Plus /> Add key</Button>
+          <DialogFooter>
+            <Button variant="secondary" onClick={close} disabled={busy}>Cancel</Button>
+            <Button onClick={save} disabled={busy}>{busy ? "Saving…" : "Save secret"}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      <ConfirmDialog state={confirmState} onClose={() => setConfirmState(null)} />
+    </Card>
   );
 }
 
