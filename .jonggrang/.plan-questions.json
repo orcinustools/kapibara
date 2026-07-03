@@ -1,0 +1,35 @@
+{
+  "goal_analysis": "User wants me to read PLAN.md, identify which tasks/milestones are still unfinished, and produce an implementation plan to complete them. The blocker: PLAN.md has no per-task status markers, the README claims all milestones M0-M9 are already done and e2e-verified, the Go backend compiles with routes for every feature, yet there is a large uncommitted frontend refactor in progress and no active Jonggrang tasks. What counts as 'unfinished' is therefore ambiguous.",
+  "questions": [
+    {
+      "question": "PLAN.md milestones M0-M9 are all present in code and the README says they're done & e2e-verified. What is the actual gap you want this plan to close?",
+      "rationale": "Determines the entire scope and direction of the plan; 'unfinished' means very different things depending on this.",
+      "type": "single_choice",
+      "options": [
+        { "value": "finish_web_refactor", "label": "Finish the in-progress frontend refactor", "rationale": "There is ~1,629 lines of uncommitted web changes; this treats that WIP as the unfinished task and plans to complete + verify + commit it." },
+        { "value": "audit_gaps", "label": "Audit PLAN.md milestone-by-milestone for real gaps", "rationale": "Distrust the 'done' claim; systematically verify each milestone's features actually work and plan to fill whatever is stubbed, broken, or missing." },
+        { "value": "beyond_parity", "label": "New scope beyond current parity", "rationale": "Everything in PLAN.md is truly done; plan should cover new features/improvements not in the original plan (needs you to specify them)." },
+        { "value": "harden_release", "label": "Hardening, tests, docs & release polish", "rationale": "Features are done but production-readiness (test coverage, security, install.sh/goreleaser, docs) needs completing." }
+      ]
+    },
+    {
+      "question": "How should the plan treat the uncommitted frontend changes (App.tsx, all pages, new components/ and lib/ dirs)?",
+      "rationale": "This WIP may itself be the 'unfinished task' or unrelated churn that should be committed/reverted separately before planning.",
+      "type": "single_choice",
+      "options": [
+        { "value": "build_on", "label": "Build on / complete this WIP", "rationale": "Plan assumes this refactor is intended and incomplete; tasks will finish and validate it." },
+        { "value": "commit_first", "label": "It's finished — commit it, then plan other work", "rationale": "The refactor is complete; plan focuses elsewhere and treats this as ready to commit." },
+        { "value": "ignore", "label": "Ignore / out of scope", "rationale": "This churn is unrelated to what you want planned; exclude it from the plan entirely." }
+      ]
+    },
+    {
+      "question": "What does 'selesai' (done) require for verification in the plan?",
+      "rationale": "Decides how verification-heavy the plan is and whether a live orcinus cluster is assumed available.",
+      "type": "single_choice",
+      "options": [
+        { "value": "build_unit", "label": "Build + existing tests pass", "rationale": "Lightweight: compile, typecheck, run current test suite. Fast, no cluster needed." },
+        { "value": "live_e2e", "label": "Re-verify e2e against a live orcinus cluster", "rationale": "Heavier: plan includes real deploy/browser verification against an orcinus cluster (assumes one is reachable)." }
+      ]
+    }
+  ]
+}

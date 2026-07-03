@@ -8,3 +8,9 @@ web/dist/
 web/test-results/
 .env
 web/tsconfig.tsbuildinfo
+
+# Jonggrang ephemeral state
+.jonggrang/.ephemeral/
+.jonggrang/locks/
+.jonggrang/.worktree/
+.jonggrang/.drafts/

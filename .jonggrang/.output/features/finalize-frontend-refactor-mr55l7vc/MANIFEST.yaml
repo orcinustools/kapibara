@@ -1,0 +1,146 @@
+feature_id: finalize-frontend-refactor-mr55l7vc
+description: finalize-frontend-refactor
+work_type: SMALL
+created_at: '2026-07-03T16:34:12.121Z'
+updated_at: '2026-07-03T17:48:30.138Z'
+status: completed
+current_phase: null
+active_phases:
+  - 1
+  - 2
+  - 3
+  - 4
+  - 8
+  - 9
+  - 11
+  - 12
+  - 13
+  - 14
+  - 15
+  - 16
+  - 17
+phases:
+  '1':
+    name: setup
+    status: completed
+    started_at: null
+    completed_at: '2026-07-03T16:36:50.020Z'
+    agent_id: null
+    output:
+      source: approve
+    output_files: []
+  '2':
+    name: triage
+    status: completed
+    started_at: null
+    completed_at: '2026-07-03T16:36:50.023Z'
+    agent_id: null
+    output:
+      source: approve
+    output_files: []
+  '3':
+    name: codebase-discovery
+    status: completed
+    started_at: null
+    completed_at: '2026-07-03T16:36:50.025Z'
+    agent_id: null
+    output:
+      source: approve
+    output_files: []
+  '4':
+    name: skill-discovery
+    status: completed
+    started_at: null
+    completed_at: '2026-07-03T16:36:50.027Z'
+    agent_id: null
+    output:
+      source: approve
+    output_files: []
+  '8':
+    name: implementation
+    status: completed
+    started_at: '2026-07-03T17:17:10.656Z'
+    completed_at: '2026-07-03T17:31:00.085Z'
+    agent_id: null
+    output:
+      source: work-loop
+    output_files: []
+  '9':
+    name: simplification
+    status: completed
+    started_at: '2026-07-03T17:31:00.109Z'
+    completed_at: '2026-07-03T17:31:29.602Z'
+    agent_id: null
+    output: null
+    output_files: []
+  '11':
+    name: domain-compliance
+    status: completed
+    started_at: '2026-07-03T17:31:29.605Z'
+    completed_at: '2026-07-03T17:33:38.848Z'
+    agent_id: null
+    output: null
+    output_files: []
+  '12':
+    name: code-quality
+    status: completed
+    started_at: '2026-07-03T17:33:38.850Z'
+    completed_at: '2026-07-03T17:36:27.753Z'
+    agent_id: null
+    output: null
+    output_files:
+      - path: .gitignore
+        type: code
+        size: 224
+        created_at: '2026-07-03T16:15:18.106Z'
+  '13':
+    name: test-planning
+    status: completed
+    started_at: '2026-07-03T17:36:27.754Z'
+    completed_at: '2026-07-03T17:39:09.046Z'
+    agent_id: null
+    output: null
+    output_files: []
+  '14':
+    name: testing
+    status: completed
+    started_at: '2026-07-03T17:39:09.050Z'
+    completed_at: '2026-07-03T17:41:26.320Z'
+    agent_id: null
+    output: null
+    output_files:
+      - path: .gitignore
+        type: code
+        size: 224
+        created_at: '2026-07-03T16:15:18.106Z'
+  '15':
+    name: coverage
+    status: completed
+    started_at: '2026-07-03T17:41:26.321Z'
+    completed_at: '2026-07-03T17:44:26.246Z'
+    agent_id: null
+    output: null
+    output_files: []
+  '16':
+    name: test-quality
+    status: completed
+    started_at: '2026-07-03T17:44:26.247Z'
+    completed_at: '2026-07-03T17:46:54.814Z'
+    agent_id: null
+    output: null
+    output_files: []
+  '17':
+    name: completion
+    status: completed
+    started_at: '2026-07-03T17:46:54.815Z'
+    completed_at: '2026-07-03T17:48:30.138Z'
+    agent_id: null
+    output: null
+    output_files: []
+agents: {}
+validation:
+  review_passed: false
+  tests_passed: false
+  coverage_met: false
+locks: []
+context_usage: null

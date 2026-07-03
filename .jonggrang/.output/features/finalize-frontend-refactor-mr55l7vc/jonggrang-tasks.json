@@ -1,0 +1,334 @@
+{
+  "tasks": [
+    {
+      "id": "task-001",
+      "title": "Phase 1 — Baseline gates & e2e contract re-grep",
+      "description": "Establish a green baseline before any changes. Run `cd web && npm run build` (tsc -b + vite build) and `make build && make test` and record that the current tree compiles/tests green. Re-grep `web/e2e.mjs` and enumerate every exact-string and role/aria contract it asserts (button labels, headings, testids, roles) into a short note appended to `.jonggrang/progress.txt` so later phases add UI without renaming those anchors. Acceptance: build+test output captured as green (or existing failures documented); a written list of e2e-asserted anchors exists; no source files changed except progress.txt.",
+      "priority": 1,
+      "status": "completed",
+      "feature_id": "finalize-frontend-refactor-mr55l7vc",
+      "skill": "core/gateway-testing",
+      "blocked_by": [],
+      "passes": true,
+      "files": [
+        "web/e2e.mjs",
+        ".jonggrang/progress.txt"
+      ],
+      "started_at": null,
+      "completed_at": "2026-07-03T16:40:20.404Z",
+      "error_log": []
+    },
+    {
+      "id": "task-002",
+      "title": "Phase 2 — Add shadcn primitives, sonner, Toaster mount & theme toggle",
+      "description": "Add the missing shadcn/ui primitives and toast system. Install deps @radix-ui/react-dialog, @radix-ui/react-dropdown-menu, @radix-ui/react-checkbox, @radix-ui/react-tooltip, sonner (update web/package.json + package-lock.json). Create web/src/components/ui/{dialog,dropdown-menu,checkbox,tooltip,skeleton,sonner}.tsx following existing shadcn conventions (cva variants, cn() merge, radix primitives, @/* alias). Mount <Toaster/> in web/src/App.tsx. Add a light/dark theme toggle in the App sidebar that flips the theme class on the root and persists to localStorage; ensure light-mode CSS variables + toast styling exist in web/src/styles.css. Acceptance: `cd web && npm run build` green; primitives importable via @/components/ui; theme toggle switches tokens; Toaster rendered once.",
+      "priority": 2,
+      "status": "completed",
+      "feature_id": "finalize-frontend-refactor-mr55l7vc",
+      "skill": "library/frontend/implementing-frontend-design",
+      "blocked_by": [
+        "task-001"
+      ],
+      "passes": true,
+      "files": [
+        "web/package.json",
+        "web/package-lock.json",
+        "web/src/components/ui/dialog.tsx",
+        "web/src/components/ui/dropdown-menu.tsx",
+        "web/src/components/ui/checkbox.tsx",
+        "web/src/components/ui/tooltip.tsx",
+        "web/src/components/ui/skeleton.tsx",
+        "web/src/components/ui/sonner.tsx",
+        "web/src/App.tsx",
+        "web/src/styles.css"
+      ],
+      "started_at": "2026-07-03T16:40:38.733Z",
+      "completed_at": "2026-07-03T16:45:38.906Z",
+      "error_log": []
+    },
+    {
+      "id": "task-003",
+      "title": "Phase 2 — Replace native alert/prompt/confirm with toasts + confirm dialogs",
+      "description": "Remove every native alert()/prompt()/confirm() from web/src/pages/ProjectDetail.tsx and web/src/pages/Settings.tsx (deploy/scale/rollback/delete and 2FA-disable flows). Replace success/error feedback with sonner toasts and replace destructive/confirmation prompts with the shadcn dialog confirm pattern. Swap the raw checkbox input for the shadcn Checkbox. Do NOT rename any e2e-asserted text/roles from task-001's list. Acceptance: grep for alert(/prompt(/confirm( in both pages returns nothing; confirm dialogs gate destructive actions; npm run build green.",
+      "priority": 2,
+      "status": "completed",
+      "feature_id": "finalize-frontend-refactor-mr55l7vc",
+      "skill": "library/frontend/implementing-frontend-design",
+      "blocked_by": [
+        "task-002"
+      ],
+      "passes": true,
+      "files": [
+        "web/src/pages/ProjectDetail.tsx",
+        "web/src/pages/Settings.tsx"
+      ],
+      "started_at": "2026-07-03T16:46:21.377Z",
+      "completed_at": "2026-07-03T16:50:02.730Z",
+      "error_log": []
+    },
+    {
+      "id": "task-004",
+      "title": "Phase 2 — Skeleton loaders & consistent empty/error states",
+      "description": "Replace plain loading text with the shadcn Skeleton component and add consistent empty-state and error-state rendering + toast feedback across web/src/pages/Projects.tsx, web/src/pages/Cluster.tsx, web/src/pages/Audit.tsx, and web/src/pages/Auth.tsx. Keep e2e anchors intact. Acceptance: each listed page shows skeletons during load and a clear empty/error state; npm run build green.",
+      "priority": 2,
+      "status": "completed",
+      "feature_id": "finalize-frontend-refactor-mr55l7vc",
+      "skill": "library/frontend/implementing-frontend-design",
+      "blocked_by": [
+        "task-002"
+      ],
+      "passes": true,
+      "files": [
+        "web/src/pages/Projects.tsx",
+        "web/src/pages/Cluster.tsx",
+        "web/src/pages/Audit.tsx",
+        "web/src/pages/Auth.tsx"
+      ],
+      "started_at": null,
+      "completed_at": "2026-07-03T16:53:30.140Z",
+      "error_log": []
+    },
+    {
+      "id": "task-005",
+      "title": "Phase 3 — Live-follow Logs tab (streaming fetch reader)",
+      "description": "Add a streaming reader helper to web/src/api.ts (incremental fetch/ReadableStream with an AbortController) that consumes /projects/{p}/logs?follow=true. Rewrite the Logs tab in web/src/pages/ProjectDetail.tsx to stream live with auto-scroll, plus Stop and Clear controls; abort the reader on unmount and on Stop, and cap the buffer size to avoid unbounded memory. Acceptance: logs follow live and auto-scroll; Stop halts streaming and aborts the request; no leaked readers on tab switch/unmount; npm run build green.",
+      "priority": 3,
+      "status": "completed",
+      "feature_id": "finalize-frontend-refactor-mr55l7vc",
+      "skill": "library/frontend/implementing-frontend-design",
+      "blocked_by": [
+        "task-003"
+      ],
+      "passes": true,
+      "files": [
+        "web/src/api.ts",
+        "web/src/pages/ProjectDetail.tsx"
+      ],
+      "started_at": "2026-07-03T16:54:05.619Z",
+      "completed_at": "2026-07-03T16:56:24.888Z",
+      "error_log": []
+    },
+    {
+      "id": "task-006",
+      "title": "Phase 3 — Deployment build-log viewer drawer",
+      "description": "Add a deployment detail drawer/dialog in web/src/pages/ProjectDetail.tsx that streams the build log for a running or finished deployment via /deployments/{id} (reusing the task-005 streaming helper in web/src/api.ts), so push repo to live URL is observable. Show deployment status and allow closing/aborting the stream. Acceptance: clicking a deployment opens a drawer streaming its build log; stream aborts on close; npm run build green.",
+      "priority": 3,
+      "status": "completed",
+      "feature_id": "finalize-frontend-refactor-mr55l7vc",
+      "skill": "library/frontend/implementing-frontend-design",
+      "blocked_by": [
+        "task-005"
+      ],
+      "passes": true,
+      "files": [
+        "web/src/pages/ProjectDetail.tsx",
+        "web/src/api.ts"
+      ],
+      "started_at": "2026-07-03T16:57:14.242Z",
+      "completed_at": "2026-07-03T17:00:09.346Z",
+      "error_log": []
+    },
+    {
+      "id": "task-007",
+      "title": "Phase 4 — Env-vars & Secrets editor (M4)",
+      "description": "Add a per-app environment-variable key/value editor and a project/app Secrets editor in web/src/pages/ProjectDetail.tsx, wired to the /secrets CRUD endpoints and the app env/secretKeys fields. Add any additive helpers needed to web/src/api.ts (no breaking contract changes). Support add/edit/remove rows, masked secret values, and toast feedback on save. Acceptance: variables and secrets can be created/updated/deleted from the UI and persist via the API; npm run build green.",
+      "priority": 4,
+      "status": "completed",
+      "feature_id": "finalize-frontend-refactor-mr55l7vc",
+      "skill": "library/frontend/implementing-frontend-design",
+      "blocked_by": [
+        "task-003"
+      ],
+      "passes": true,
+      "files": [
+        "web/src/pages/ProjectDetail.tsx",
+        "web/src/api.ts"
+      ],
+      "started_at": "2026-07-03T17:00:52.476Z",
+      "completed_at": "2026-07-03T17:05:51.719Z",
+      "error_log": []
+    },
+    {
+      "id": "task-008",
+      "title": "Phase 4 — Domains/TLS management UI (M4)",
+      "description": "Surface domain + TLS management in web/src/pages/ProjectDetail.tsx beyond the single create-form field: list domains for an app with host, TLS on/off toggle, and cert status; allow add/remove. Wire to existing app domain fields/endpoints via additive helpers in web/src/api.ts if needed. Acceptance: multiple domains manageable per app with TLS state and cert status shown; npm run build green.",
+      "priority": 4,
+      "status": "completed",
+      "feature_id": "finalize-frontend-refactor-mr55l7vc",
+      "skill": "library/frontend/implementing-frontend-design",
+      "blocked_by": [
+        "task-003"
+      ],
+      "passes": true,
+      "files": [
+        "web/src/pages/ProjectDetail.tsx",
+        "web/src/api.ts"
+      ],
+      "started_at": "2026-07-03T17:06:46.982Z",
+      "completed_at": "2026-07-03T17:11:49.201Z",
+      "error_log": []
+    },
+    {
+      "id": "task-009",
+      "title": "Phase 5 — Scale/rollback dialogs + autoscale/rollout fields (M6)",
+      "description": "Replace prompt()-based scale/rollback with proper shadcn dialogs in web/src/pages/ProjectDetail.tsx (calling /projects/{p}/services/{s}/scale and /rollback). Expose the existing but unreachable app fields autoscaleMin/autoscaleMax/autoscaleCpu/autoscaleMemory and rollout in the app create/edit form UI so they can be set. Acceptance: scale and rollback run through dialogs (no prompt()); autoscale + rollout fields are editable and submitted in appReq; npm run build green.",
+      "priority": 5,
+      "status": "completed",
+      "feature_id": "finalize-frontend-refactor-mr55l7vc",
+      "skill": "library/frontend/implementing-frontend-design",
+      "blocked_by": [
+        "task-005"
+      ],
+      "passes": true,
+      "files": [
+        "web/src/pages/ProjectDetail.tsx"
+      ],
+      "started_at": "2026-07-03T17:12:43.086Z",
+      "completed_at": "2026-07-03T17:14:35.578Z",
+      "error_log": []
+    },
+    {
+      "id": "task-010",
+      "title": "Phase 5 — CPU/RAM metric graphs/bars in Overview (M6)",
+      "description": "Render CPU/RAM metrics as compact graphs/bars in the Overview of web/src/pages/ProjectDetail.tsx instead of raw numbers in a table cell, consuming /projects/{p}/metrics (instantaneous). Prefer lightweight inline/CSS bars to avoid a new charting dependency; only add recharts if explicitly wanted. Acceptance: CPU and RAM display as visual bars/graphs with readable labels; no heavy new dep unless justified; npm run build green.",
+      "priority": 5,
+      "status": "completed",
+      "feature_id": "finalize-frontend-refactor-mr55l7vc",
+      "skill": "library/frontend/implementing-frontend-design",
+      "blocked_by": [
+        "task-003"
+      ],
+      "passes": true,
+      "files": [
+        "web/src/pages/ProjectDetail.tsx"
+      ],
+      "started_at": "2026-07-03T17:15:17.558Z",
+      "completed_at": "2026-07-03T17:16:34.715Z",
+      "error_log": []
+    },
+    {
+      "id": "task-011",
+      "title": "Phase 6 — Backup cron schedule + S3 destination UI (M8)",
+      "description": "Add backup cron schedule and S3 destination inputs to web/src/pages/ProjectDetail.tsx, wired to /projects/{p}/backups (backend pkg/backup/s3.go already supports it). Allow configuring schedule, S3 bucket/credentials destination, and triggering/listing backups. Acceptance: backup schedule + S3 destination configurable and persisted via API; backup list visible; npm run build green.",
+      "priority": 6,
+      "status": "completed",
+      "feature_id": "finalize-frontend-refactor-mr55l7vc",
+      "skill": "library/frontend/implementing-frontend-design",
+      "blocked_by": [
+        "task-003"
+      ],
+      "passes": true,
+      "files": [
+        "web/src/pages/ProjectDetail.tsx",
+        "web/src/api.ts"
+      ],
+      "started_at": "2026-07-03T17:17:23.213Z",
+      "completed_at": "2026-07-03T17:20:10.788Z",
+      "error_log": []
+    },
+    {
+      "id": "task-012",
+      "title": "Phase 6 — Preview deploy trigger + teardown UI (M9)",
+      "description": "Add preview-deployment trigger and teardown controls on the app row in web/src/pages/ProjectDetail.tsx, wired to /apps/{id}/preview and /projects/{p}/preview/{branch}. Show preview URL/status and allow teardown with a confirm dialog. Acceptance: preview deploy can be triggered and torn down from the UI with visible status; npm run build green.",
+      "priority": 6,
+      "status": "completed",
+      "feature_id": "finalize-frontend-refactor-mr55l7vc",
+      "skill": "library/frontend/implementing-frontend-design",
+      "blocked_by": [
+        "task-003"
+      ],
+      "passes": true,
+      "files": [
+        "web/src/pages/ProjectDetail.tsx",
+        "web/src/api.ts"
+      ],
+      "started_at": null,
+      "completed_at": "2026-07-03T17:23:53.911Z",
+      "error_log": []
+    },
+    {
+      "id": "task-013",
+      "title": "Phase 6 — Org member / RBAC management surface (M1, low-risk)",
+      "description": "Add an org member / RBAC management surface (list members, roles, add/remove) in web/src/pages/Settings.tsx and, if needed, a nav entry in web/src/App.tsx, wired to existing member endpoints via additive helpers in web/src/api.ts. Pull in only if low-risk; if the backend endpoints are insufficient, document the gap in .jonggrang/progress.txt and defer rather than half-build. Acceptance: members listable with roles and add/remove works, OR a clear deferral note is recorded; npm run build green.",
+      "priority": 6,
+      "status": "completed",
+      "feature_id": "finalize-frontend-refactor-mr55l7vc",
+      "skill": "library/frontend/implementing-frontend-design",
+      "blocked_by": [
+        "task-003"
+      ],
+      "passes": true,
+      "files": [
+        "web/src/pages/Settings.tsx",
+        "web/src/App.tsx",
+        "web/src/api.ts",
+        ".jonggrang/progress.txt"
+      ],
+      "started_at": "2026-07-03T17:24:38.202Z",
+      "completed_at": "2026-07-03T17:25:44.742Z",
+      "error_log": []
+    },
+    {
+      "id": "task-014",
+      "title": "Phase 7 — Regenerate embedded dist, verify, atomic commit",
+      "description": "Run `make ui` so pkg/webui/dist matches source (old bundle deleted, new bundle embedded via pkg/webui/embed.go — do not edit embed.go). Re-run `make build && make test` and confirm green. git add the new web/src/components/, web/src/lib/, new deps/lockfile, and the rebuilt pkg/webui/dist assets, then land atomic commit(s) per AGENTS.md commit prefix convention. Acceptance: embedded dist regenerated and staged; make build && make test green; changes committed atomically with a feat|fix|refactor|test|docs|chore(scope): message.",
+      "priority": 7,
+      "status": "completed",
+      "feature_id": "finalize-frontend-refactor-mr55l7vc",
+      "skill": "core/gateway-testing",
+      "blocked_by": [
+        "task-004",
+        "task-006",
+        "task-007",
+        "task-008",
+        "task-009",
+        "task-010",
+        "task-011",
+        "task-012",
+        "task-013"
+      ],
+      "passes": true,
+      "files": [
+        "pkg/webui/dist/index.html",
+        "pkg/webui/dist/assets/index-BEPlGRxj.js",
+        "pkg/webui/dist/assets/index-CsCKrj5Z.css",
+        "web/src/components/ui/badge.tsx",
+        "web/src/components/ui/button.tsx",
+        "web/src/components/ui/card.tsx",
+        "web/src/components/ui/input.tsx",
+        "web/src/components/ui/label.tsx",
+        "web/src/components/ui/select.tsx",
+        "web/src/components/ui/table.tsx",
+        "web/src/components/ui/tabs.tsx",
+        "web/src/components/ui/textarea.tsx",
+        "web/src/lib/utils.ts",
+        "web/index.html",
+        "web/src/ui.tsx",
+        "web/tsconfig.json",
+        "web/vite.config.ts"
+      ],
+      "started_at": null,
+      "completed_at": "2026-07-03T17:28:30.250Z",
+      "error_log": []
+    },
+    {
+      "id": "task-015",
+      "title": "Phase 8 — Log learnings to progress.txt",
+      "description": "Append to .jonggrang/progress.txt: the real audited M1-M9 state (what was already implemented vs genuinely missing), the fragility of the web/e2e.mjs exact-string/role contracts, and the embedded-dist sync rule (source changes require make ui or the binary serves stale UI). Acceptance: progress.txt contains these three learnings written clearly for the next session.",
+      "priority": 8,
+      "status": "completed",
+      "feature_id": "finalize-frontend-refactor-mr55l7vc",
+      "skill": null,
+      "blocked_by": [
+        "task-014"
+      ],
+      "passes": true,
+      "files": [
+        ".jonggrang/progress.txt"
+      ],
+      "started_at": "2026-07-03T17:29:22.822Z",
+      "completed_at": "2026-07-03T17:30:45.121Z",
+      "error_log": []
+    }
+  ]
+}
