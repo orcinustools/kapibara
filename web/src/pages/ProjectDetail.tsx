@@ -106,7 +106,7 @@ function Applications({ projectId }: { projectId: string }) {
   const [apps, setApps] = useState<any[]>([]);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState("");
-  const [form, setForm] = useState<any>({ name: "", buildType: "image", image: "", repoUrl: "", branch: "main", port: 80, domain: "", tls: false });
+  const [form, setForm] = useState<any>({ name: "", buildType: "image", image: "", repoUrl: "", branch: "main", port: 80, domain: "", tls: false, autoscaleMin: "", autoscaleMax: "", autoscaleCpu: "", autoscaleMemory: "", rollout: "" });
   const [confirmState, setConfirmState] = useState<ConfirmState>(null);
   const [scaleTarget, setScaleTarget] = useState<any | null>(null);
   const [replicas, setReplicas] = useState("2");
@@ -119,7 +119,19 @@ function Applications({ projectId }: { projectId: string }) {
 
   async function create() {
     setErr(null);
-    try { await api.post(`/projects/${projectId}/apps`, { ...form, port: Number(form.port) }); toast.success(`Created ${form.name}`); setForm({ ...form, name: "" }); load(); }
+    try {
+      await api.post(`/projects/${projectId}/apps`, {
+        ...form,
+        port: Number(form.port) || 0,
+        autoscaleMin: Number(form.autoscaleMin) || 0,
+        autoscaleMax: Number(form.autoscaleMax) || 0,
+        autoscaleCpu: Number(form.autoscaleCpu) || 0,
+        autoscaleMemory: Number(form.autoscaleMemory) || 0,
+      });
+      toast.success(`Created ${form.name}`);
+      setForm({ ...form, name: "" });
+      load();
+    }
     catch (e) { setErr((e as Error).message); }
   }
   async function deploy(a: any) {
@@ -233,9 +245,42 @@ function Applications({ projectId }: { projectId: string }) {
               <Checkbox checked={form.tls} onCheckedChange={(v) => setForm({ ...form, tls: v === true })} />
               <span>Enable TLS (cert-manager / ACME)</span>
             </label>
-            <div><Button className="mt-4" onClick={create} disabled={!form.name}>Create application</Button></div>
           </div>
         </div>
+        <div className="mt-5 border-t border-border pt-4">
+          <div className="mb-1 text-sm font-medium">Autoscaling &amp; rollout</div>
+          <p className="mb-3 text-xs text-muted-foreground">
+            Optional. Set min/max replicas and target utilization to enable a horizontal autoscaler — leave min/max at 0
+            to run a fixed replica count. Rollout picks the progressive-delivery strategy.
+          </p>
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
+            <div>
+              <Label>Min replicas</Label>
+              <Input type="number" min={0} value={form.autoscaleMin} onChange={(e) => setForm({ ...form, autoscaleMin: e.target.value })} placeholder="0" />
+            </div>
+            <div>
+              <Label>Max replicas</Label>
+              <Input type="number" min={0} value={form.autoscaleMax} onChange={(e) => setForm({ ...form, autoscaleMax: e.target.value })} placeholder="0" />
+            </div>
+            <div>
+              <Label>Target CPU %</Label>
+              <Input type="number" min={0} max={100} value={form.autoscaleCpu} onChange={(e) => setForm({ ...form, autoscaleCpu: e.target.value })} placeholder="0" />
+            </div>
+            <div>
+              <Label>Target memory %</Label>
+              <Input type="number" min={0} max={100} value={form.autoscaleMemory} onChange={(e) => setForm({ ...form, autoscaleMemory: e.target.value })} placeholder="0" />
+            </div>
+            <div>
+              <Label>Rollout</Label>
+              <Select value={form.rollout} onChange={(e) => setForm({ ...form, rollout: e.target.value })}>
+                <option value="">Rolling (default)</option>
+                <option value="canary">Canary</option>
+                <option value="blue-green">Blue-green</option>
+              </Select>
+            </div>
+          </div>
+        </div>
+        <div><Button className="mt-5" onClick={create} disabled={!form.name}>Create application</Button></div>
       </Card>
       <ConfirmDialog state={confirmState} onClose={() => setConfirmState(null)} />
       <Dialog open={!!scaleTarget} onOpenChange={(o) => { if (!o) setScaleTarget(null); }}>
