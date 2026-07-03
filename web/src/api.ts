@@ -22,7 +22,7 @@ export class ApiError extends Error {
   }
 }
 
-async function req<T = any>(method: string, path: string, body?: any): Promise<T> {
+async function req<T = any>(method: string, path: string, body?: any, signal?: AbortSignal): Promise<T> {
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   const tok = getToken();
   if (tok) headers["Authorization"] = "Bearer " + tok;
@@ -30,6 +30,7 @@ async function req<T = any>(method: string, path: string, body?: any): Promise<T
     method,
     headers,
     body: body !== undefined ? JSON.stringify(body) : undefined,
+    signal,
   });
   const txt = await res.text();
   let data: any = {};
@@ -43,7 +44,8 @@ async function req<T = any>(method: string, path: string, body?: any): Promise<T
 }
 
 export const api = {
-  get: <T = any>(p: string) => req<T>("GET", p),
+  // `signal` lets callers abort an in-flight GET (e.g. a polling drawer closing).
+  get: <T = any>(p: string, signal?: AbortSignal) => req<T>("GET", p, undefined, signal),
   post: <T = any>(p: string, b?: any) => req<T>("POST", p, b),
   put: <T = any>(p: string, b?: any) => req<T>("PUT", p, b),
   del: <T = any>(p: string, b?: any) => req<T>("DELETE", p, b),

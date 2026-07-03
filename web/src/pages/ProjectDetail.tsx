@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useParams, useSearchParams } from "react-router-dom";
-import { Trash2 } from "lucide-react";
+import { Loader2, Trash2 } from "lucide-react";
 import { api, streamText } from "../api";
 import { Card, Empty, ErrorBox, StatusPill } from "../ui";
 import { Button } from "@/components/ui/button";
@@ -361,6 +361,7 @@ function Compose({ projectId }: { projectId: string }) {
 
 function Deployments({ projectId }: { projectId: string }) {
   const [deps, setDeps] = useState<any[]>([]);
+  const [openId, setOpenId] = useState<string | null>(null);
   useEffect(() => { api.get(`/projects/${projectId}/deployments`).then((r) => setDeps(r.deployments || [])); }, [projectId]);
   return (
     <Card title="Deployment history">
@@ -377,7 +378,12 @@ function Deployments({ projectId }: { projectId: string }) {
           </TableHeader>
           <TableBody>
             {deps.map((d) => (
-              <TableRow key={d.id}>
+              <TableRow
+                key={d.id}
+                className="cursor-pointer"
+                title="View build log"
+                onClick={() => setOpenId(d.id)}
+              >
                 <TableCell>{d.kind}</TableCell>
                 <TableCell><StatusPill status={d.status} /></TableCell>
                 <TableCell className="font-mono text-xs text-muted-foreground">{(d.imageRef || "").slice(0, 34)}</TableCell>
@@ -388,7 +394,101 @@ function Deployments({ projectId }: { projectId: string }) {
           </TableBody>
         </Table>
       )}
+      <DeploymentDrawer deploymentId={openId} onClose={() => setOpenId(null)} />
     </Card>
+  );
+}
+
+// Statuses that are still in flight — the drawer polls /deployments/{id} while
+// the deployment is in one of these so the build log grows live.
+const DEPLOY_LIVE = new Set(["pending", "running"]);
+const DEPLOY_POLL_MS = 1500;
+
+// DeploymentDrawer opens a dialog for a single deployment and follows its build
+// log. /deployments/{id} returns a JSON snapshot (status + log + error), not a
+// chunked stream, so "streaming" is done by polling while the deployment is
+// live. The in-flight GET is aborted and the poll timer cleared on close.
+function DeploymentDrawer({ deploymentId, onClose }: { deploymentId: string | null; onClose: () => void }) {
+  const [dep, setDep] = useState<any | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const preRef = useRef<HTMLPreElement>(null);
+
+  useEffect(() => {
+    if (!deploymentId) return;
+    const ctrl = new AbortController();
+    let active = true;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    setDep(null);
+    setErr(null);
+    setLoading(true);
+
+    async function tick() {
+      try {
+        const d = await api.get(`/deployments/${deploymentId}`, ctrl.signal);
+        if (!active) return;
+        setDep(d);
+        setLoading(false);
+        if (DEPLOY_LIVE.has(d.status)) timer = setTimeout(tick, DEPLOY_POLL_MS);
+      } catch (e) {
+        // Aborting on close rejects with an AbortError — swallow it.
+        if (!active || (e as Error).name === "AbortError") return;
+        const msg = (e as Error).message;
+        setErr(msg);
+        setLoading(false);
+        toast.error("Failed to load deployment: " + msg);
+      }
+    }
+    tick();
+
+    return () => {
+      active = false;
+      ctrl.abort();
+      if (timer) clearTimeout(timer);
+    };
+  }, [deploymentId]);
+
+  // Pin the build-log viewport to the newest output as it streams in.
+  useEffect(() => {
+    if (preRef.current) preRef.current.scrollTop = preRef.current.scrollHeight;
+  }, [dep?.log]);
+
+  const live = !!dep && DEPLOY_LIVE.has(dep.status);
+  return (
+    <Dialog open={!!deploymentId} onOpenChange={(o) => { if (!o) onClose(); }}>
+      <DialogContent className="max-w-3xl">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            Deployment
+            {dep && <StatusPill status={dep.status} />}
+            {live && <Loader2 className="size-4 animate-spin text-muted-foreground" />}
+          </DialogTitle>
+          <DialogDescription>
+            {dep
+              ? `${dep.kind} · ${live ? "following build log…" : "build finished"}`
+              : "Loading deployment…"}
+          </DialogDescription>
+        </DialogHeader>
+        {dep && (dep.imageRef || dep.commitSha) && (
+          <div className="flex flex-wrap gap-x-6 gap-y-1 text-xs text-muted-foreground">
+            {dep.imageRef && <span>image <span className="font-mono text-foreground">{dep.imageRef}</span></span>}
+            {dep.commitSha && <span>commit <span className="font-mono text-foreground">{dep.commitSha.slice(0, 12)}</span></span>}
+            {dep.applied > 0 && <span>applied <span className="font-mono text-foreground">{dep.applied}</span></span>}
+          </div>
+        )}
+        {err && <ErrorBox error={err} />}
+        {dep?.error && <ErrorBox error={dep.error} />}
+        <pre
+          ref={preRef}
+          className="max-h-[52vh] min-h-[200px] overflow-auto rounded-md border border-border bg-background/60 p-3 font-mono text-xs"
+        >
+          {dep?.log || (loading ? "Connecting…" : "No build output.")}
+        </pre>
+        <DialogFooter>
+          <Button variant="secondary" onClick={onClose}>Close</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
