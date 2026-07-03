@@ -1,7 +1,7 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useParams, useSearchParams } from "react-router-dom";
 import { Trash2 } from "lucide-react";
-import { api, getText } from "../api";
+import { api, streamText } from "../api";
 import { Card, Empty, ErrorBox, StatusPill } from "../ui";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -392,21 +392,95 @@ function Deployments({ projectId }: { projectId: string }) {
   );
 }
 
+// Cap the live-log buffer so a long-running follow can't grow unbounded in memory.
+const LOG_BUFFER_MAX = 200_000; // ~200 KB of tail text
+
 function Logs({ projectId }: { projectId: string }) {
   const [service, setService] = useState("");
   const [text, setText] = useState("");
-  async function load() {
-    setText("loading…");
-    const t = await getText(`/projects/${projectId}/logs?service=${encodeURIComponent(service)}&tail=200`);
-    setText(t);
+  const [following, setFollowing] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [autoScroll, setAutoScroll] = useState(true);
+  const abortRef = useRef<AbortController | null>(null);
+  const preRef = useRef<HTMLPreElement>(null);
+
+  function stop() {
+    abortRef.current?.abort();
+    abortRef.current = null;
+    setFollowing(false);
   }
+
+  async function follow() {
+    abortRef.current?.abort(); // drop any in-flight reader before starting a new one
+    setErr(null);
+    setText("");
+    const ctrl = new AbortController();
+    abortRef.current = ctrl;
+    setFollowing(true);
+    try {
+      await streamText(
+        `/projects/${projectId}/logs?service=${encodeURIComponent(service)}&tail=200&follow=true`,
+        {
+          signal: ctrl.signal,
+          onChunk: (chunk) =>
+            setText((prev) => {
+              const next = prev + chunk;
+              return next.length > LOG_BUFFER_MAX ? next.slice(next.length - LOG_BUFFER_MAX) : next;
+            }),
+        },
+      );
+    } catch (e) {
+      if ((e as Error).name !== "AbortError") {
+        const msg = (e as Error).message;
+        setErr(msg);
+        toast.error("Log stream failed: " + msg);
+      }
+    } finally {
+      // Only clear following state if this reader is still the active one — a
+      // newer follow() may have replaced abortRef while we were awaiting.
+      if (abortRef.current === ctrl) {
+        abortRef.current = null;
+        setFollowing(false);
+      }
+    }
+  }
+
+  // Abort the reader when the tab unmounts / project switches so nothing leaks.
+  useEffect(() => () => abortRef.current?.abort(), []);
+
+  // Keep the viewport pinned to the newest lines while auto-scroll is on.
+  useEffect(() => {
+    if (autoScroll && preRef.current) preRef.current.scrollTop = preRef.current.scrollHeight;
+  }, [text, autoScroll]);
+
   return (
     <Card title="Logs">
-      <div className="mb-3 flex flex-wrap gap-2">
-        <Input placeholder="service name (blank = first pod)" value={service} onChange={(e) => setService(e.target.value)} className="max-w-[260px]" />
-        <Button onClick={load}>Fetch logs</Button>
+      <div className="mb-3 flex flex-wrap items-center gap-2">
+        <Input
+          placeholder="service name (blank = first pod)"
+          value={service}
+          onChange={(e) => setService(e.target.value)}
+          disabled={following}
+          className="max-w-[260px]"
+        />
+        {following ? (
+          <Button variant="destructive" onClick={stop}>Stop</Button>
+        ) : (
+          <Button onClick={follow}>Follow logs</Button>
+        )}
+        <Button variant="outline" onClick={() => { setText(""); setErr(null); }} disabled={!text && !err}>Clear</Button>
+        <label className="ml-auto flex cursor-pointer select-none items-center gap-2 text-sm text-muted-foreground">
+          <Checkbox checked={autoScroll} onCheckedChange={(v) => setAutoScroll(v === true)} />
+          Auto-scroll
+        </label>
       </div>
-      <Pre>{text || "Pick a service and fetch logs."}</Pre>
+      {err && <ErrorBox error={err} />}
+      <pre
+        ref={preRef}
+        className="max-h-[420px] overflow-auto rounded-md border border-border bg-background/60 p-3 font-mono text-xs"
+      >
+        {text || (following ? "Connecting…" : "Pick a service and follow logs.")}
+      </pre>
     </Card>
   );
 }

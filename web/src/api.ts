@@ -57,6 +57,39 @@ export async function getText(path: string): Promise<string> {
   return res.text();
 }
 
+// Incrementally consume a chunked/flushed text response (e.g. follow=true logs).
+// `onChunk` fires for each decoded piece as it arrives; the promise resolves when
+// the server closes the stream. Pass an AbortSignal to stop early — aborting
+// rejects with a DOMException whose name is "AbortError", which callers should
+// swallow. Always resolves/rejects after releasing the underlying reader, so no
+// reader is leaked on unmount or Stop.
+export async function streamText(
+  path: string,
+  opts: { signal: AbortSignal; onChunk: (chunk: string) => void },
+): Promise<void> {
+  const res = await fetch(BASE + path, {
+    headers: { Authorization: "Bearer " + getToken() },
+    signal: opts.signal,
+  });
+  if (!res.ok || !res.body) {
+    const txt = await res.text().catch(() => "");
+    throw new ApiError(res.status, txt ? { error: txt } : {});
+  }
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (value) opts.onChunk(decoder.decode(value, { stream: true }));
+    }
+    const tail = decoder.decode();
+    if (tail) opts.onChunk(tail);
+  } finally {
+    reader.releaseLock();
+  }
+}
+
 export async function health(): Promise<{ engineHealthy: boolean; status: string }> {
   try {
     const res = await fetch("/healthz");
