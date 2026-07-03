@@ -1,91 +1,159 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:is(.dark *));
+
+/*
+ * Kapibara design tokens — dark-first PaaS dashboard.
+ * shadcn/ui-compatible CSS variables (HSL channels), mapped into Tailwind
+ * theme colors via @theme inline below.
+ */
 :root {
-  --bg: #0d0f14;
-  --panel: #161922;
-  --panel2: #1d212b;
-  --border: #272b36;
-  --fg: #e6e8ec;
-  --muted: #8b93a1;
-  --accent: #5b8cff;
-  --ok: #3fb950;
-  --err: #f85149;
-  --warn: #d29922;
+  --background: 222 22% 7%;
+  --foreground: 210 20% 92%;
+  --card: 222 18% 10%;
+  --card-foreground: 210 20% 92%;
+  --popover: 222 18% 10%;
+  --popover-foreground: 210 20% 92%;
+  --primary: 221 83% 65%;
+  --primary-foreground: 222 47% 11%;
+  --secondary: 222 14% 16%;
+  --secondary-foreground: 210 20% 92%;
+  --muted: 222 14% 15%;
+  --muted-foreground: 220 10% 60%;
+  --accent: 222 14% 18%;
+  --accent-foreground: 210 20% 92%;
+  --destructive: 0 72% 60%;
+  --destructive-foreground: 210 20% 98%;
+  --success: 142 58% 48%;
+  --warning: 38 92% 58%;
+  --border: 222 14% 18%;
+  --input: 222 14% 18%;
+  --ring: 221 83% 65%;
+  --radius: 0.6rem;
 }
-* { box-sizing: border-box; }
-html, body, #root { height: 100%; }
-body {
-  margin: 0;
-  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
-  background: var(--bg);
-  color: var(--fg);
-  font-size: 14px;
+
+/*
+ * Light palette — opt-in via the `.light` class on <html> (set by the theme
+ * toggle in App.tsx). Neutrals are tinted toward the brand blue, not flat gray.
+ */
+.light {
+  --background: 210 30% 98%;
+  --foreground: 222 30% 14%;
+  --card: 0 0% 100%;
+  --card-foreground: 222 30% 14%;
+  --popover: 0 0% 100%;
+  --popover-foreground: 222 30% 14%;
+  --primary: 221 83% 53%;
+  --primary-foreground: 210 40% 98%;
+  --secondary: 214 28% 94%;
+  --secondary-foreground: 222 30% 18%;
+  --muted: 214 24% 93%;
+  --muted-foreground: 220 12% 42%;
+  --accent: 214 28% 91%;
+  --accent-foreground: 222 30% 18%;
+  --destructive: 0 72% 48%;
+  --destructive-foreground: 210 40% 98%;
+  --success: 142 64% 36%;
+  --warning: 32 90% 44%;
+  --border: 216 20% 87%;
+  --input: 216 20% 84%;
+  --ring: 221 83% 53%;
 }
-a { color: var(--accent); text-decoration: none; cursor: pointer; }
-a:hover { text-decoration: underline; }
-h1 { font-size: 1.2rem; }
-h2 { font-size: .78rem; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: .2rem 0 .8rem; }
-h3 { font-size: 1rem; margin: .2rem 0 .6rem; }
 
-/* layout */
-.layout { display: grid; grid-template-columns: 220px 1fr; min-height: 100vh; }
-.sidebar { background: var(--panel); border-right: 1px solid var(--border); padding: 1rem .8rem; display: flex; flex-direction: column; gap: .2rem; }
-.sidebar .brand { font-weight: 700; font-size: 1.1rem; padding: .3rem .5rem 1rem; display:flex; gap:.4rem; align-items:center; }
-.sidebar nav a { display: block; padding: .5rem .7rem; border-radius: 8px; color: var(--fg); }
-.sidebar nav a.active, .sidebar nav a:hover { background: var(--panel2); text-decoration: none; }
-.sidebar .spacer { flex: 1; }
-.sidebar .foot { font-size: .75rem; color: var(--muted); padding: .5rem; border-top: 1px solid var(--border); }
-.content { padding: 1.4rem 1.8rem; overflow: auto; }
-.topbar { display: flex; align-items: center; gap: .8rem; margin-bottom: 1.2rem; }
-.topbar .sp { flex: 1; }
+@theme inline {
+  --color-background: hsl(var(--background));
+  --color-foreground: hsl(var(--foreground));
+  --color-card: hsl(var(--card));
+  --color-card-foreground: hsl(var(--card-foreground));
+  --color-popover: hsl(var(--popover));
+  --color-popover-foreground: hsl(var(--popover-foreground));
+  --color-primary: hsl(var(--primary));
+  --color-primary-foreground: hsl(var(--primary-foreground));
+  --color-secondary: hsl(var(--secondary));
+  --color-secondary-foreground: hsl(var(--secondary-foreground));
+  --color-muted: hsl(var(--muted));
+  --color-muted-foreground: hsl(var(--muted-foreground));
+  --color-accent: hsl(var(--accent));
+  --color-accent-foreground: hsl(var(--accent-foreground));
+  --color-destructive: hsl(var(--destructive));
+  --color-destructive-foreground: hsl(var(--destructive-foreground));
+  --color-success: hsl(var(--success));
+  --color-warning: hsl(var(--warning));
+  --color-border: hsl(var(--border));
+  --color-input: hsl(var(--input));
+  --color-ring: hsl(var(--ring));
 
-/* cards */
-.card { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 1rem 1.2rem; margin-bottom: 1rem; }
-.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
-@media (max-width: 780px) { .grid2 { grid-template-columns: 1fr; } .layout { grid-template-columns: 1fr; } }
+  --radius-lg: var(--radius);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-sm: calc(var(--radius) - 4px);
 
-/* inputs */
-label { display: block; font-size: .8rem; color: var(--muted); margin-bottom: .2rem; margin-top: .5rem; }
-input, textarea, select {
-  width: 100%; padding: .5rem .6rem; background: #0b0d12; border: 1px solid var(--border);
-  border-radius: 8px; color: var(--fg); font: inherit;
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
 }
-textarea { min-height: 130px; font-family: ui-monospace, SFMono-Regular, monospace; font-size: .82rem; }
-input:focus, textarea:focus, select:focus { outline: none; border-color: var(--accent); }
 
-/* buttons */
-button {
-  font: inherit; background: var(--accent); color: #fff; border: 0; border-radius: 8px;
-  padding: .5rem .9rem; cursor: pointer; font-weight: 500;
+@layer base {
+  * {
+    border-color: hsl(var(--border));
+  }
+  body {
+    margin: 0;
+    background-color: hsl(var(--background));
+    color: hsl(var(--foreground));
+    font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+  :root {
+    color-scheme: dark;
+  }
+  .light {
+    color-scheme: light;
+  }
 }
-button:hover { opacity: .92; }
-button:disabled { opacity: .5; cursor: default; }
-button.sec { background: var(--panel2); color: var(--fg); border: 1px solid var(--border); }
-button.danger { background: transparent; color: var(--err); border: 1px solid var(--err); }
-button.sm { padding: .3rem .6rem; font-size: .82rem; }
-.row { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; }
 
-/* table */
-table { width: 100%; border-collapse: collapse; }
-th, td { text-align: left; padding: .5rem .5rem; border-bottom: 1px solid var(--border); font-size: .88rem; }
-th { color: var(--muted); font-weight: 500; font-size: .78rem; text-transform: uppercase; letter-spacing: .04em; }
-tr:last-child td { border-bottom: 0; }
+/* Sonner toast tokens — map the library's CSS variables onto our design tokens
+ * so toasts stay on-palette in both themes (classNames handle layout/colors). */
+[data-sonner-toaster] {
+  --normal-bg: hsl(var(--card));
+  --normal-text: hsl(var(--foreground));
+  --normal-border: hsl(var(--border));
+}
 
-/* misc */
-.pill { padding: .12rem .55rem; border-radius: 99px; font-size: .72rem; font-weight: 600; }
-.pill.ok { background: rgba(63,185,80,.15); color: var(--ok); }
-.pill.err { background: rgba(248,81,73,.15); color: var(--err); }
-.pill.run { background: rgba(210,153,34,.15); color: var(--warn); }
-.pill.gray { background: var(--panel2); color: var(--muted); }
-.muted { color: var(--muted); }
-.mono { font-family: ui-monospace, monospace; font-size: .82rem; }
-pre { background: #0b0d12; border: 1px solid var(--border); border-radius: 8px; padding: .7rem; overflow: auto; max-height: 360px; font-size: .8rem; margin: 0; }
-.tabs { display: flex; gap: .3rem; border-bottom: 1px solid var(--border); margin-bottom: 1rem; flex-wrap: wrap; }
-.tabs a { padding: .5rem .8rem; border-radius: 8px 8px 0 0; color: var(--muted); }
-.tabs a.active { color: var(--fg); border-bottom: 2px solid var(--accent); }
-.err-box { background: rgba(248,81,73,.1); border: 1px solid var(--err); color: #ffb3ae; padding: .5rem .7rem; border-radius: 8px; font-size: .85rem; margin: .5rem 0; }
-.center { display: grid; place-items: center; min-height: 100vh; }
-.authcard { width: 380px; max-width: 92vw; }
-.badge-dot { width:8px; height:8px; border-radius:50%; display:inline-block; }
-.kv { display:grid; grid-template-columns: 130px 1fr; gap:.3rem .8rem; font-size:.85rem; }
-.kv div:nth-child(odd){ color: var(--muted); }
-.chips { display:flex; gap:.4rem; flex-wrap:wrap; }
-.chip { background: var(--panel2); border:1px solid var(--border); border-radius:6px; padding:.15rem .5rem; font-size:.78rem; }
+/*
+ * Radix enter/exit motion — dependency-free (no tailwindcss-animate). Keyed on
+ * the [data-state] the primitives already emit; transform + opacity only, with
+ * ease-out deceleration. Covers dialog, dropdown-menu, and tooltip.
+ */
+@keyframes kap-overlay-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes kap-content-in {
+  from { opacity: 0; transform: translate(-50%, -50%) scale(0.96); }
+  to { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+}
+@keyframes kap-pop-in {
+  from { opacity: 0; transform: scale(0.96); }
+  to { opacity: 1; transform: scale(1); }
+}
+[data-radix-popper-content-wrapper] [data-state="open"],
+[data-radix-popper-content-wrapper] [data-state="delayed-open"] {
+  animation: kap-pop-in 140ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+[data-slot="dialog-overlay"][data-state="open"],
+.fixed[data-state="open"][class*="bg-background/70"] {
+  animation: kap-overlay-in 160ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+[role="dialog"][data-state="open"] {
+  animation: kap-content-in 180ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+@media (prefers-reduced-motion: reduce) {
+  [data-radix-popper-content-wrapper] [data-state],
+  [role="dialog"][data-state],
+  .fixed[data-state][class*="bg-background/70"] {
+    animation: none;
+  }
+}
