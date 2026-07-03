@@ -1,12 +1,21 @@
 import { useEffect, useState } from "react";
+import { Trash2 } from "lucide-react";
 import { api } from "../api";
 import { useAuth } from "../auth";
 import { Card, Empty, ErrorBox } from "../ui";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Select } from "@/components/ui/select";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { toast } from "@/components/ui/sonner";
 
 export function SettingsPage() {
   return (
     <>
-      <div className="topbar"><h1>Settings</h1></div>
+      <div className="mb-6"><h1 className="text-xl font-semibold">Settings</h1></div>
       <TwoFA />
       <ApiTokens />
       <Notifications />
@@ -20,6 +29,8 @@ function TwoFA() {
   const [url, setUrl] = useState<string | null>(null);
   const [code, setCode] = useState("");
   const [err, setErr] = useState<string | null>(null);
+  const [disableOpen, setDisableOpen] = useState(false);
+  const [disableCode, setDisableCode] = useState("");
 
   async function enroll() {
     setErr(null);
@@ -28,36 +39,61 @@ function TwoFA() {
   }
   async function verify() {
     setErr(null);
-    try { await api.post("/auth/2fa/verify", { code }); setSecret(null); await refresh(); }
+    try { await api.post("/auth/2fa/verify", { code }); setSecret(null); toast.success("Two-factor authentication enabled"); await refresh(); }
     catch (e) { setErr((e as Error).message); }
   }
   async function disable() {
-    const c = prompt("Enter current 2FA code to disable:");
+    const c = disableCode.trim();
     if (!c) return;
-    try { await api.post("/auth/2fa/disable", { code: c }); await refresh(); }
-    catch (e) { alert((e as Error).message); }
+    try {
+      await api.post("/auth/2fa/disable", { code: c });
+      toast.success("Two-factor authentication disabled");
+      setDisableOpen(false); setDisableCode("");
+      await refresh();
+    } catch (e) { toast.error((e as Error).message); }
   }
 
   return (
     <Card title="Two-factor authentication (TOTP)">
       <ErrorBox error={err} />
       {user?.twoFAEnabled ? (
-        <div className="row">
-          <span className="pill ok">Enabled</span>
-          <button className="sm danger" onClick={disable}>Disable</button>
+        <div className="flex items-center gap-3">
+          <Badge variant="success">Enabled</Badge>
+          <Button size="sm" variant="destructive" onClick={() => { setDisableCode(""); setDisableOpen(true); }}>Disable</Button>
         </div>
       ) : secret ? (
         <>
-          <p className="muted">Add this secret to your authenticator app, then enter a code to confirm.</p>
-          <div className="kv"><div>Secret</div><div className="mono">{secret}</div></div>
-          <div className="mono muted" style={{ fontSize: ".72rem", wordBreak: "break-all", margin: ".5rem 0" }}>{url}</div>
-          <label>Code</label>
-          <input value={code} onChange={(e) => setCode(e.target.value)} placeholder="123456" style={{ maxWidth: 160 }} />
-          <div><button style={{ marginTop: ".6rem" }} onClick={verify}>Enable 2FA</button></div>
+          <p className="text-sm text-muted-foreground">
+            Add this secret to your authenticator app, then enter a code to confirm.
+          </p>
+          <dl className="mt-2 grid grid-cols-[130px_1fr] gap-x-4 gap-y-1.5 text-sm">
+            <dt className="text-muted-foreground">Secret</dt>
+            <dd className="font-mono">{secret}</dd>
+          </dl>
+          <div className="my-2 break-all font-mono text-[0.72rem] text-muted-foreground">{url}</div>
+          <Label>Code</Label>
+          <Input value={code} onChange={(e) => setCode(e.target.value)} placeholder="123456" className="max-w-40" />
+          <div><Button className="mt-3" onClick={verify}>Enable 2FA</Button></div>
         </>
       ) : (
-        <button onClick={enroll}>Enable 2FA</button>
+        <Button onClick={enroll}>Enable 2FA</Button>
       )}
+      <Dialog open={disableOpen} onOpenChange={(o) => { if (!o) { setDisableOpen(false); setDisableCode(""); } }}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Disable two-factor authentication</DialogTitle>
+            <DialogDescription>Enter a current code from your authenticator app to confirm.</DialogDescription>
+          </DialogHeader>
+          <div>
+            <Label>Current 2FA code</Label>
+            <Input value={disableCode} onChange={(e) => setDisableCode(e.target.value)} placeholder="123456" className="max-w-40" autoFocus />
+          </div>
+          <DialogFooter>
+            <Button variant="secondary" onClick={() => { setDisableOpen(false); setDisableCode(""); }}>Cancel</Button>
+            <Button variant="destructive" onClick={disable} disabled={!disableCode.trim()}>Disable</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </Card>
   );
 }
@@ -74,19 +110,31 @@ function ApiTokens() {
   return (
     <Card title="API tokens">
       {created && (
-        <div className="err-box" style={{ background: "rgba(63,185,80,.1)", borderColor: "var(--ok)", color: "#a6f0b0" }}>
-          Copy your token now (shown once): <span className="mono">{created}</span>
+        <div className="mb-3 rounded-md border border-success/40 bg-success/10 px-3 py-2 text-sm text-success">
+          Copy your token now (shown once): <span className="font-mono">{created}</span>
         </div>
       )}
       {tokens.length === 0 ? <Empty text="No tokens." /> : (
-        <table>
-          <thead><tr><th>Name</th><th>Last used</th></tr></thead>
-          <tbody>{tokens.map((t) => <tr key={t.id}><td>{t.name || "—"}</td><td className="muted">{t.lastUsed || "never"}</td></tr>)}</tbody>
-        </table>
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Name</TableHead>
+              <TableHead>Last used</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {tokens.map((t) => (
+              <TableRow key={t.id}>
+                <TableCell>{t.name || "—"}</TableCell>
+                <TableCell className="text-muted-foreground">{t.lastUsed || "never"}</TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
       )}
-      <div className="row" style={{ marginTop: ".8rem" }}>
-        <input placeholder="token name" value={name} onChange={(e) => setName(e.target.value)} style={{ maxWidth: 220 }} />
-        <button onClick={create}>Create token</button>
+      <div className="mt-4 flex flex-wrap items-center gap-2">
+        <Input placeholder="token name" value={name} onChange={(e) => setName(e.target.value)} className="max-w-56" />
+        <Button onClick={create}>Create token</Button>
       </div>
     </Card>
   );
@@ -112,28 +160,49 @@ function Notifications() {
   return (
     <Card title="Notifications">
       {list.length === 0 ? <Empty text="No notification channels." /> : (
-        <table>
-          <thead><tr><th>Name</th><th>Type</th><th>On</th><th></th></tr></thead>
-          <tbody>
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Name</TableHead>
+              <TableHead>Type</TableHead>
+              <TableHead>On</TableHead>
+              <TableHead className="w-0" />
+            </TableRow>
+          </TableHeader>
+          <TableBody>
             {list.map((n) => (
-              <tr key={n.id}>
-                <td>{n.name || "—"}</td><td>{n.type}</td>
-                <td className="muted">{[n.onSuccess && "success", n.onFailure && "failure"].filter(Boolean).join(", ")}</td>
-                <td style={{ textAlign: "right" }}><button className="sm danger" onClick={() => del(n)}>✕</button></td>
-              </tr>
+              <TableRow key={n.id}>
+                <TableCell>{n.name || "—"}</TableCell>
+                <TableCell>{n.type}</TableCell>
+                <TableCell className="text-muted-foreground">
+                  {[n.onSuccess && "success", n.onFailure && "failure"].filter(Boolean).join(", ")}
+                </TableCell>
+                <TableCell className="text-right">
+                  <Button size="icon" variant="destructive" onClick={() => del(n)}>
+                    <Trash2 className="size-4" />
+                  </Button>
+                </TableCell>
+              </TableRow>
             ))}
-          </tbody>
-        </table>
+          </TableBody>
+        </Table>
       )}
-      <div className="row" style={{ marginTop: ".8rem", alignItems: "flex-end" }}>
-        <div><label>Name</label><input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></div>
-        <div><label>Type</label>
-          <select value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value })}>
-            {["slack", "discord", "telegram", "webhook"].map((x) => <option key={x}>{x}</option>)}
-          </select>
+      <div className="mt-4 flex flex-wrap items-end gap-2">
+        <div>
+          <Label>Name</Label>
+          <Input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
         </div>
-        <div style={{ flex: 1 }}><label>{form.type === "telegram" ? "Bot token" : "Webhook URL"}</label><input value={form.url} onChange={(e) => setForm({ ...form, url: e.target.value })} /></div>
-        <button onClick={create} disabled={!orgId}>Add</button>
+        <div>
+          <Label>Type</Label>
+          <Select value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value })}>
+            {["slack", "discord", "telegram", "webhook"].map((x) => <option key={x}>{x}</option>)}
+          </Select>
+        </div>
+        <div className="flex-1">
+          <Label>{form.type === "telegram" ? "Bot token" : "Webhook URL"}</Label>
+          <Input value={form.url} onChange={(e) => setForm({ ...form, url: e.target.value })} />
+        </div>
+        <Button onClick={create} disabled={!orgId}>Add</Button>
       </div>
     </Card>
   );
