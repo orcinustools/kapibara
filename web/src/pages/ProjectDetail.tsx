@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useParams, useSearchParams } from "react-router-dom";
 import { Eye, EyeOff, Globe, Loader2, Plus, Trash2 } from "lucide-react";
-import { api, streamText, secretsApi, saveAppEnv, saveAppDomain, type SecretSummary } from "../api";
+import { api, streamText, secretsApi, backupsApi, saveAppEnv, saveAppDomain, type SecretSummary, type BackupSummary, type BackupCreate } from "../api";
 import { Card, Empty, ErrorBox, StatusPill } from "../ui";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -706,62 +706,240 @@ function Templates({ projectId }: { projectId: string }) {
   );
 }
 
+// ---- Backups (M8) -----------------------------------------------------------
+// A backup config schedules (cron) or manually triggers a dump of one managed
+// database to a local path or an S3-compatible bucket. The S3 endpoint +
+// credentials are WRITE-ONLY server-side (json:"-"), so they are set on create
+// and never read back — the list can only show cron/destination/enabled + the
+// last-run status. Presets keep the cron field approachable without a full
+// cron builder.
+const CRON_PRESETS: { label: string; value: string }[] = [
+  { label: "Manual only (no schedule)", value: "" },
+  { label: "Hourly", value: "0 * * * *" },
+  { label: "Daily at 02:00", value: "0 2 * * *" },
+  { label: "Weekly (Sun 03:00)", value: "0 3 * * 0" },
+  { label: "Monthly (1st 04:00)", value: "0 4 1 * *" },
+];
+
+const blankS3 = () => ({ endpoint: "", bucket: "", region: "", accessKey: "", secretKey: "", secure: true });
+
 function Backups({ projectId }: { projectId: string }) {
   const [dbs, setDbs] = useState<any[]>([]);
-  const [backups, setBackups] = useState<any[]>([]);
+  const [backups, setBackups] = useState<BackupSummary[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState<string | null>(null);
+  const [running, setRunning] = useState<string | null>(null);
+
+  // Create-form state.
   const [dbId, setDbId] = useState("");
-  const [msg, setMsg] = useState<string | null>(null);
+  const [cron, setCron] = useState("");
+  const [cronPreset, setCronPreset] = useState("");
+  const [destination, setDestination] = useState("local");
+  const [enabled, setEnabled] = useState(true);
+  const [s3, setS3] = useState(blankS3());
+  const [saving, setSaving] = useState(false);
+
   async function load() {
-    const d = await api.get(`/projects/${projectId}/databases`); setDbs(d.databases || []);
-    const b = await api.get(`/projects/${projectId}/backups`); setBackups(b.backups || []);
+    setErr(null);
+    try {
+      const [d, b] = await Promise.all([
+        api.get(`/projects/${projectId}/databases`),
+        backupsApi.list(projectId),
+      ]);
+      setDbs(d.databases || []);
+      setBackups(b);
+    } catch (e) {
+      setErr((e as Error).message);
+      toast.error("Failed to load backups: " + (e as Error).message);
+    } finally {
+      setLoading(false);
+    }
   }
   useEffect(() => { load(); }, [projectId]);
+
+  const dbName = (id: string) => {
+    const d = dbs.find((x) => x.id === id);
+    return d ? `${d.name} (${d.engine})` : id.slice(0, 8);
+  };
+
   async function create() {
     if (!dbId) return;
-    await api.post(`/projects/${projectId}/backups`, { databaseId: dbId, destination: "local", enabled: true });
-    load();
+    if (destination === "s3" && (!s3.endpoint.trim() || !s3.bucket.trim())) {
+      toast.error("S3 destination needs an endpoint and a bucket.");
+      return;
+    }
+    setSaving(true);
+    try {
+      const body: BackupCreate = { databaseId: dbId, cron: cron.trim(), destination, enabled };
+      if (destination === "s3") {
+        body.s3Config = {
+          endpoint: s3.endpoint.trim(),
+          bucket: s3.bucket.trim(),
+          region: s3.region.trim(),
+          accessKey: s3.accessKey,
+          secretKey: s3.secretKey,
+          secure: s3.secure ? "true" : "false",
+        };
+      }
+      await backupsApi.create(projectId, body);
+      toast.success(`Backup config created for ${dbName(dbId)}`);
+      // Reset the form but keep the selected database for quick follow-ups.
+      setCron(""); setCronPreset(""); setDestination("local"); setEnabled(true); setS3(blankS3());
+      load();
+    } catch (e) {
+      toast.error("Create failed: " + (e as Error).message);
+    } finally {
+      setSaving(false);
+    }
   }
-  async function run(b: any) {
-    setMsg(null);
-    try { const r = await api.post(`/backups/${b.id}/run`); setMsg("Backup saved: " + r.path); load(); }
-    catch (e) { setMsg((e as Error).message); }
+
+  async function run(b: BackupSummary) {
+    setRunning(b.id);
+    try {
+      const r = await backupsApi.run(b.id);
+      toast.success("Backup saved: " + r.path);
+      load();
+    } catch (e) {
+      toast.error("Backup failed: " + (e as Error).message);
+    } finally {
+      setRunning(null);
+    }
   }
+
   return (
     <>
-      <Card title="Backups">
-        {msg && <div className="mb-3 rounded-md border border-border bg-muted px-3 py-2 text-sm">{msg}</div>}
-        {backups.length === 0 ? <Empty text="No backup configs yet." /> : (
+      <Card title="Backup schedules">
+        {loading ? (
+          <div className="space-y-2">{[0, 1].map((i) => <div key={i} className="h-9 rounded-md bg-muted animate-pulse" />)}</div>
+        ) : err ? (
+          <ErrorBox error={err} />
+        ) : backups.length === 0 ? (
+          <Empty text="No backup configs yet. Create one below to schedule dumps or back up on demand." />
+        ) : (
           <Table>
             <TableHeader>
               <TableRow>
+                <TableHead>Database</TableHead>
                 <TableHead>Destination</TableHead>
-                <TableHead>Cron</TableHead>
-                <TableHead>Last status</TableHead>
-                <TableHead>Last path</TableHead>
+                <TableHead>Schedule</TableHead>
+                <TableHead>Enabled</TableHead>
+                <TableHead>Last run</TableHead>
+                <TableHead>Result</TableHead>
                 <TableHead className="w-0" />
               </TableRow>
             </TableHeader>
             <TableBody>
               {backups.map((b) => (
                 <TableRow key={b.id}>
-                  <TableCell>{b.destination}</TableCell>
-                  <TableCell>{b.cron || "manual"}</TableCell>
-                  <TableCell>{b.lastStatus ? <StatusPill status={b.lastStatus} /> : "—"}</TableCell>
-                  <TableCell className="font-mono text-xs text-muted-foreground">{(b.lastPath || "").slice(-40)}</TableCell>
-                  <TableCell className="text-right"><Button size="sm" onClick={() => run(b)}>Run now</Button></TableCell>
+                  <TableCell>{dbName(b.databaseId)}</TableCell>
+                  <TableCell>
+                    <Badge variant={b.destination === "s3" ? "default" : "outline"}>{b.destination}</Badge>
+                  </TableCell>
+                  <TableCell className="font-mono text-xs">{b.cron || <span className="text-muted-foreground">manual</span>}</TableCell>
+                  <TableCell>{b.enabled ? <StatusPill status="enabled" /> : <span className="text-muted-foreground text-xs">off</span>}</TableCell>
+                  <TableCell className="text-xs text-muted-foreground">{b.lastRunAt ? new Date(b.lastRunAt).toLocaleString() : "never"}</TableCell>
+                  <TableCell>
+                    {b.lastStatus ? <StatusPill status={b.lastStatus} /> : "—"}
+                    {b.lastError && <div className="mt-0.5 max-w-[16rem] truncate text-xs text-destructive" title={b.lastError}>{b.lastError}</div>}
+                    {!b.lastError && b.lastPath && <div className="mt-0.5 max-w-[16rem] truncate font-mono text-xs text-muted-foreground" title={b.lastPath}>{b.lastPath}</div>}
+                  </TableCell>
+                  <TableCell className="text-right">
+                    <Button size="sm" variant="outline" onClick={() => run(b)} disabled={running === b.id}>
+                      {running === b.id ? <Loader2 className="animate-spin" /> : "Run now"}
+                    </Button>
+                  </TableCell>
                 </TableRow>
               ))}
             </TableBody>
           </Table>
         )}
       </Card>
+
       <Card title="New backup config">
-        <Label>Database</Label>
-        <Select value={dbId} onChange={(e) => setDbId(e.target.value)}>
-          <option value="">select…</option>
-          {dbs.map((d) => <option key={d.id} value={d.id}>{d.name} ({d.engine})</option>)}
-        </Select>
-        <div><Button className="mt-3" onClick={create} disabled={!dbId}>Create (local)</Button></div>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <div>
+            <Label>Database</Label>
+            <Select value={dbId} onChange={(e) => setDbId(e.target.value)}>
+              <option value="">select…</option>
+              {dbs.map((d) => <option key={d.id} value={d.id}>{d.name} ({d.engine})</option>)}
+            </Select>
+          </div>
+          <div>
+            <Label>Schedule</Label>
+            <Select
+              value={cronPreset}
+              onChange={(e) => {
+                const v = e.target.value;
+                setCronPreset(v);
+                if (v !== "custom") setCron(v);
+              }}
+            >
+              {CRON_PRESETS.map((p) => <option key={p.value} value={p.value}>{p.label}</option>)}
+              <option value="custom">Custom…</option>
+            </Select>
+          </div>
+        </div>
+
+        {cronPreset === "custom" && (
+          <div className="mt-3">
+            <Label>Cron expression</Label>
+            <Input value={cron} onChange={(e) => setCron(e.target.value)} placeholder="0 2 * * *" className="font-mono" />
+            <p className="mt-1 text-xs text-muted-foreground">Standard 5-field cron (min hour day month weekday). Leave blank for manual-only.</p>
+          </div>
+        )}
+
+        <div className="mt-3 grid gap-4 sm:grid-cols-2">
+          <div>
+            <Label>Destination</Label>
+            <Select value={destination} onChange={(e) => setDestination(e.target.value)}>
+              <option value="local">Local (server data dir)</option>
+              <option value="s3">S3-compatible bucket</option>
+            </Select>
+          </div>
+          <label className="flex items-end gap-2 pb-2 text-sm">
+            <Checkbox checked={enabled} onCheckedChange={(v) => setEnabled(v === true)} />
+            <span>Enable scheduled runs</span>
+          </label>
+        </div>
+
+        {destination === "s3" && (
+          <div className="mt-3 rounded-md border border-border bg-muted/40 p-3">
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div>
+                <Label>Endpoint</Label>
+                <Input value={s3.endpoint} onChange={(e) => setS3({ ...s3, endpoint: e.target.value })} placeholder="s3.amazonaws.com" />
+              </div>
+              <div>
+                <Label>Bucket</Label>
+                <Input value={s3.bucket} onChange={(e) => setS3({ ...s3, bucket: e.target.value })} placeholder="my-backups" />
+              </div>
+              <div>
+                <Label>Region</Label>
+                <Input value={s3.region} onChange={(e) => setS3({ ...s3, region: e.target.value })} placeholder="us-east-1" />
+              </div>
+              <label className="flex items-end gap-2 pb-2 text-sm">
+                <Checkbox checked={s3.secure} onCheckedChange={(v) => setS3({ ...s3, secure: v === true })} />
+                <span>Use TLS (HTTPS)</span>
+              </label>
+              <div>
+                <Label>Access key</Label>
+                <Input value={s3.accessKey} onChange={(e) => setS3({ ...s3, accessKey: e.target.value })} autoComplete="off" />
+              </div>
+              <div>
+                <Label>Secret key</Label>
+                <Input type="password" value={s3.secretKey} onChange={(e) => setS3({ ...s3, secretKey: e.target.value })} autoComplete="new-password" />
+              </div>
+            </div>
+            <p className="mt-2 text-xs text-muted-foreground">Credentials are stored server-side and never shown back for security.</p>
+          </div>
+        )}
+
+        <div className="mt-4">
+          <Button onClick={create} disabled={!dbId || saving}>
+            {saving ? <Loader2 className="animate-spin" /> : <Plus />}
+            Create backup config
+          </Button>
+        </div>
       </Card>
     </>
   );

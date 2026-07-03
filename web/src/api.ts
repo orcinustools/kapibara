@@ -83,6 +83,43 @@ export function saveAppDomain(appId: string, domain: string, tls: boolean) {
   return api.put(`/apps/${appId}`, { domain, tls });
 }
 
+// Database backup configs (M8). A config schedules (or manually triggers) a dump
+// of one managed database to a local path or an S3-compatible bucket. NOTE: the
+// backend stores `s3Config` as write-only (json:"-"), so the endpoint/credentials
+// are ACCEPTED on create but NEVER returned by the list — the UI can't prefill
+// them back (same pattern as app env / cluster secrets). `cron`, `destination`,
+// `enabled` and the last-run status fields ARE serialized and read back.
+export interface BackupSummary {
+  id: string;
+  databaseId: string;
+  cron: string;
+  destination: string; // local | s3
+  enabled: boolean;
+  lastRunAt: string | null;
+  lastStatus: string;
+  lastPath: string;
+  lastError: string;
+}
+
+export interface BackupCreate {
+  databaseId: string;
+  cron: string;
+  destination: string; // local | s3
+  s3Config?: Record<string, string>;
+  enabled: boolean;
+}
+
+export const backupsApi = {
+  list: (projectId: string, signal?: AbortSignal) =>
+    api
+      .get<{ backups: BackupSummary[] }>(`/projects/${projectId}/backups`, signal)
+      .then((r) => r.backups || []),
+  create: (projectId: string, body: BackupCreate) =>
+    api.post<BackupSummary>(`/projects/${projectId}/backups`, body),
+  run: (backupId: string) =>
+    api.post<{ status: string; path: string; backup: BackupSummary }>(`/backups/${backupId}/run`),
+};
+
 // Raw text fetch (used for log streaming / plain-text responses).
 export async function getText(path: string): Promise<string> {
   const res = await fetch(BASE + path, {
