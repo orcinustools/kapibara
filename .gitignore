@@ -1,0 +1,10 @@
+/bin/
+/dist/
+*.db
+*.db-*
+.kapibara/
+web/node_modules/
+web/dist/
+web/test-results/
+.env
+web/tsconfig.tsbuildinfo
