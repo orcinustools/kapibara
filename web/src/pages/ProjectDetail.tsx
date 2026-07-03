@@ -59,6 +59,30 @@ export function ProjectDetailPage() {
   );
 }
 
+// Lightweight, dependency-free CSS meter for instantaneous CPU/RAM readings.
+// `ratio` is 0..1 relative to the busiest pod in the current set (no k8s limits
+// are exposed, so peers are the only honest reference). The numeric label keeps
+// the absolute value readable next to the visual bar.
+function MetricBar({ valueLabel, ratio, tone, srLabel }: { valueLabel: string; ratio: number; tone: "cpu" | "mem"; srLabel: string }) {
+  const pct = Math.round(Math.max(0, Math.min(1, ratio)) * 100);
+  const fill = tone === "cpu" ? "bg-primary" : "bg-success";
+  return (
+    <div className="flex items-center gap-2 min-w-[8rem]">
+      <div
+        className="h-1.5 flex-1 rounded-full bg-muted overflow-hidden"
+        role="progressbar"
+        aria-label={srLabel}
+        aria-valuenow={pct}
+        aria-valuemin={0}
+        aria-valuemax={100}
+      >
+        <div className={`h-full rounded-full ${fill} transition-[width] duration-300`} style={{ width: `${pct}%` }} />
+      </div>
+      <span className="text-xs tabular-nums text-muted-foreground w-14 text-right shrink-0">{valueLabel}</span>
+    </div>
+  );
+}
+
 function Overview({ projectId }: { projectId: string }) {
   const [pods, setPods] = useState<any[]>([]);
   const [metrics, setMetrics] = useState<any[]>([]);
@@ -67,6 +91,8 @@ function Overview({ projectId }: { projectId: string }) {
     api.get(`/projects/${projectId}/metrics`).then((r) => setMetrics(r.metrics || [])).catch(() => {});
   }, [projectId]);
   const metricFor = (pod: string) => metrics.find((m) => m.pod === pod);
+  const maxCpu = Math.max(1, ...metrics.map((m) => m.cpuMillicores || 0));
+  const maxMem = Math.max(1, ...metrics.map((m) => m.memoryBytes || 0));
   return (
     <Card title="Pods">
       {pods.length === 0 ? <Empty text="No running pods." /> : (
@@ -90,8 +116,20 @@ function Overview({ projectId }: { projectId: string }) {
                   <TableCell className="font-mono text-xs">{p.name}</TableCell>
                   <TableCell><StatusPill status={p.status} /></TableCell>
                   <TableCell>{p.ready}</TableCell>
-                  <TableCell>{m ? `${m.cpuMillicores}m` : "—"}</TableCell>
-                  <TableCell>{m ? `${Math.round(m.memoryBytes / 1048576)}Mi` : "—"}</TableCell>
+                  <TableCell>
+                    {m ? (
+                      <MetricBar tone="cpu" ratio={m.cpuMillicores / maxCpu} valueLabel={`${m.cpuMillicores}m`} srLabel={`CPU ${m.cpuMillicores} millicores`} />
+                    ) : (
+                      <span className="text-muted-foreground">—</span>
+                    )}
+                  </TableCell>
+                  <TableCell>
+                    {m ? (
+                      <MetricBar tone="mem" ratio={m.memoryBytes / maxMem} valueLabel={`${Math.round(m.memoryBytes / 1048576)}Mi`} srLabel={`Memory ${Math.round(m.memoryBytes / 1048576)} mebibytes`} />
+                    ) : (
+                      <span className="text-muted-foreground">—</span>
+                    )}
+                  </TableCell>
                 </TableRow>
               );
             })}
