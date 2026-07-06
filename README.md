@@ -54,17 +54,39 @@ Buka `http://localhost:9000`, register user pertama (jadi admin).
 - **Env & Secrets:** secret di-extract ke `secretKeyRef` (via `x-orcinus-secret`).
 - **Database 1-klik:** Postgres/MySQL/MariaDB/MongoDB/Redis (StatefulSet + PVC + secret) + connection string.
 - **Day-2 ops:** logs streaming, metrics (CPU/RAM), scale, autoscale (HPA), rollback, progressive delivery.
+- **App runtime config:** resource limits/reservations (CPU/RAM), command override, persistent volume mounts (PVC), ingress path, exec health check — semua editable (bukan create-only lagi).
+- **Rollback ke deployment historis:** `deployment redeploy` me-apply ulang snapshot compose lama (untuk app = image lama tanpa rebuild).
 - **Templates** one-click (WordPress, Redis, n8n, …).
 - **Webhook auto-deploy** (push-to-deploy).
 - **Backups** DB terjadwal (cron) → local / S3-compatible.
 - **Notifikasi:** Slack, Discord, Telegram, webhook, email.
 - **Multi-node** (daftar node), **preview deployments** per-branch (project ephemeral), **audit log**.
 
+## CLI (deploy dari lokal ke server)
+
+Binary yang sama (`bin/kapibara`) juga menjadi client REST — deploy dari laptop
+ke server kapibara mana pun tanpa membuka UI:
+
+```bash
+kapibara login --server http://server:9000 --email you@example.com --password …
+kapibara projects create shop
+kapibara deploy --project shop -f docker-compose.yml        # deploy compose
+kapibara app deploy --project shop --name web --build image \
+  --image nginx:alpine --port 80 \
+  --cpu-limit 0.5 --memory-limit 512M \
+  --mount data:/var/lib/data --volume-size 2Gi             # app + resources + PVC
+kapibara deployment list --project shop                     # riwayat deploy
+kapibara deployment redeploy <deploymentId>                 # rollback ke snapshot lama
+```
+
+Token & server hasil `login` disimpan di `~/.kapibara/cli.json` (override lewat
+`KAPIBARA_URL` / `KAPIBARA_TOKEN` bila belum login). E2E CLI: `scripts/cli-e2e.sh`.
+
 ## API
 
 REST di `/api/v1`. Auth: `Authorization: Bearer <session-jwt | kap_token>`.
 Endpoint utama: `auth/*`, `orgs`, `projects`, `.../deploy`, `.../apps`, `.../databases`,
-`.../logs`, `.../metrics`, `.../services/{svc}/scale|rollback`, `templates`,
+`deployments/{id}/redeploy`, `.../logs`, `.../metrics`, `.../services/{svc}/scale|rollback`, `templates`,
 `.../backups`, `orgs/{id}/notifications`, `nodes`, `audit`, `webhooks/{secret}`.
 
 ## Status / catatan
