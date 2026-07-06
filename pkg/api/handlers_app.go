@@ -29,6 +29,27 @@ type appReq struct {
 	AutoscaleCPU    int    `json:"autoscaleCpu"`
 	AutoscaleMemory int    `json:"autoscaleMemory"`
 	Rollout         string `json:"rollout"`
+
+	// Resource limits/reservations.
+	CPULimit      string `json:"cpuLimit"`
+	MemoryLimit   string `json:"memoryLimit"`
+	CPURequest    string `json:"cpuRequest"`
+	MemoryRequest string `json:"memoryRequest"`
+	// Command overrides the image command.
+	Command []string `json:"command"`
+	// Mounts are persistent volume mounts + their PVC size.
+	Mounts     []appMount `json:"mounts"`
+	VolumeSize string     `json:"volumeSize"`
+	// Path is the ingress path prefix.
+	Path string `json:"path"`
+	// HealthCmd is an exec liveness probe command.
+	HealthCmd []string `json:"healthCmd"`
+}
+
+// appMount is a persistent volume mount in an app request.
+type appMount struct {
+	Name string `json:"name"`
+	Path string `json:"path"`
 }
 
 func (s *Server) handleCreateApp(w http.ResponseWriter, r *http.Request) {
@@ -85,8 +106,19 @@ func (s *Server) handleCreateApp(w http.ResponseWriter, r *http.Request) {
 		AutoscaleCPU:    req.AutoscaleCPU,
 		AutoscaleMemory: req.AutoscaleMemory,
 		Rollout:         req.Rollout,
-		WebhookSecret:   randomSecret(),
-		AutoDeploy:      true,
+
+		CPULimit:      req.CPULimit,
+		MemoryLimit:   req.MemoryLimit,
+		CPURequest:    req.CPURequest,
+		MemoryRequest: req.MemoryRequest,
+		Command:       marshalList(req.Command),
+		Mounts:        marshalMounts(req.Mounts),
+		VolumeSize:    req.VolumeSize,
+		Path:          req.Path,
+		HealthCmd:     marshalList(req.HealthCmd),
+
+		WebhookSecret: randomSecret(),
+		AutoDeploy:    true,
 	}
 	if err := s.Store.CreateApplication(app); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -149,6 +181,29 @@ func (s *Server) handleUpdateApp(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.SecretKeys != nil {
 		app.SecretKeys = marshalList(req.SecretKeys)
+	}
+
+	// Autoscale / rollout / resources were previously create-only; they are now
+	// editable. Zero/empty values clear the corresponding setting.
+	app.AutoscaleMin = req.AutoscaleMin
+	app.AutoscaleMax = req.AutoscaleMax
+	app.AutoscaleCPU = req.AutoscaleCPU
+	app.AutoscaleMemory = req.AutoscaleMemory
+	app.Rollout = req.Rollout
+	app.CPULimit = req.CPULimit
+	app.MemoryLimit = req.MemoryLimit
+	app.CPURequest = req.CPURequest
+	app.MemoryRequest = req.MemoryRequest
+	app.Path = orDefault(req.Path, app.Path)
+	app.VolumeSize = orDefault(req.VolumeSize, app.VolumeSize)
+	if req.Command != nil {
+		app.Command = marshalList(req.Command)
+	}
+	if req.HealthCmd != nil {
+		app.HealthCmd = marshalList(req.HealthCmd)
+	}
+	if req.Mounts != nil {
+		app.Mounts = marshalMounts(req.Mounts)
 	}
 	if err := s.Store.UpdateApplication(app); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
@@ -242,6 +297,14 @@ func marshalList(l []string) string {
 		return ""
 	}
 	b, _ := json.Marshal(l)
+	return string(b)
+}
+
+func marshalMounts(m []appMount) string {
+	if len(m) == 0 {
+		return ""
+	}
+	b, _ := json.Marshal(m)
 	return string(b)
 }
 

@@ -125,6 +125,23 @@ type Application struct {
 	AutoscaleMemory int    `json:"autoscaleMemory"`
 	Rollout         string `gorm:"size:32" json:"rollout"`
 
+	// Resource limits/reservations (compose deploy.resources → k8s
+	// limits/requests). CPU in cores (e.g. "0.5"); memory like "512M".
+	CPULimit       string `gorm:"size:32" json:"cpuLimit"`
+	MemoryLimit    string `gorm:"size:32" json:"memoryLimit"`
+	CPURequest     string `gorm:"size:32" json:"cpuRequest"`
+	MemoryRequest  string `gorm:"size:32" json:"memoryRequest"`
+	// Command overrides the image command; JSON array of args.
+	Command string `gorm:"type:text" json:"command"`
+	// Mounts is a JSON array of {name,path} persistent volume mounts.
+	Mounts string `gorm:"type:text" json:"mounts"`
+	// VolumeSize is the PVC size for persistent mounts (x-orcinus-volume-size).
+	VolumeSize string `gorm:"size:32" json:"volumeSize"`
+	// Path is the ingress path prefix (x-orcinus-path), default "/".
+	Path string `gorm:"size:255" json:"path"`
+	// HealthCmd is a JSON array exec liveness probe (compose healthcheck test).
+	HealthCmd string `gorm:"type:text" json:"healthCmd"`
+
 	// WebhookSecret authorizes push-to-deploy webhooks for this app.
 	WebhookSecret string `gorm:"uniqueIndex;size:64" json:"-"`
 	// AutoDeploy enables deploying automatically when a webhook fires.

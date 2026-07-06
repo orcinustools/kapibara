@@ -224,13 +224,57 @@ func (d *Deployer) composeFor(app *store.Application, imageRef string) (string, 
 		svc.Expose = compose.ExposeIngress
 		svc.Host = app.Domain
 		svc.TLS = app.TLS
+		svc.Path = app.Path
 	}
 	svc.AutoscaleMin = app.AutoscaleMin
 	svc.AutoscaleMax = app.AutoscaleMax
 	svc.AutoscaleCPU = app.AutoscaleCPU
 	svc.AutoscaleMemory = app.AutoscaleMemory
 	svc.Rollout = app.Rollout
-	return compose.Project{Services: []compose.Service{svc}}.Render()
+
+	// Resource limits/reservations.
+	svc.CPULimit = app.CPULimit
+	svc.MemLimit = app.MemoryLimit
+	svc.CPUReservation = app.CPURequest
+	svc.MemReservation = app.MemoryRequest
+
+	// Command override.
+	if cmd := parseList(app.Command); len(cmd) > 0 {
+		svc.Command = cmd
+	}
+	// Exec liveness probe.
+	if test := parseList(app.HealthCmd); len(test) > 0 {
+		svc.Health = &compose.HealthCheck{Test: test}
+	}
+
+	// Persistent volume mounts (named volumes → PVC).
+	var projectVolumes []string
+	for _, mnt := range parseMounts(app.Mounts) {
+		if mnt.Name == "" || mnt.Path == "" {
+			continue
+		}
+		svc.Volumes = append(svc.Volumes, mnt.Name+":"+mnt.Path)
+		projectVolumes = append(projectVolumes, mnt.Name)
+	}
+	if len(svc.Volumes) > 0 && app.VolumeSize != "" {
+		svc.VolumeSize = app.VolumeSize
+	}
+	return compose.Project{Services: []compose.Service{svc}, Volumes: projectVolumes}.Render()
+}
+
+// mount is one persistent volume mount for an application.
+type mount struct {
+	Name string `json:"name"`
+	Path string `json:"path"`
+}
+
+func parseMounts(s string) []mount {
+	if strings.TrimSpace(s) == "" {
+		return nil
+	}
+	var m []mount
+	_ = json.Unmarshal([]byte(s), &m)
+	return m
 }
 
 // imageRef builds the tagged image name for a build.

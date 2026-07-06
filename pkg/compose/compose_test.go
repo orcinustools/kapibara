@@ -60,6 +60,51 @@ func TestRenderDatabaseStatefulSet(t *testing.T) {
 	}
 }
 
+func TestRenderResourcesCommandMountsHealth(t *testing.T) {
+	out, err := Project{
+		Services: []Service{{
+			Name:           "web",
+			Image:          "nginx:alpine",
+			Replicas:       2,
+			Command:        []string{"nginx", "-g", "daemon off;"},
+			Path:           "/api",
+			Expose:         ExposeIngress,
+			Host:           "x.example.com",
+			CPULimit:       "0.5",
+			MemLimit:       "512M",
+			CPUReservation: "0.25",
+			MemReservation: "256M",
+			VolumeSize:     "2Gi",
+			Volumes:        []string{"data:/var/lib/data"},
+			Health:         &HealthCheck{Test: []string{"CMD", "curl", "-f", "http://localhost/"}, Interval: "10s", Retries: 3},
+		}},
+		Volumes: []string{"data"},
+	}.Render()
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	for _, want := range []string{
+		"deploy:",
+		"replicas: 2",
+		"resources:",
+		"limits:",
+		"cpus: \"0.5\"",
+		"memory: 512M",
+		"reservations:",
+		"command:",
+		"daemon off;",
+		"x-orcinus-path: /api",
+		"x-orcinus-volume-size: 2Gi",
+		"data:/var/lib/data",
+		"healthcheck:",
+		"retries: 3",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("rendered compose missing %q:\n%s", want, out)
+		}
+	}
+}
+
 func TestRenderRequiresImage(t *testing.T) {
 	_, err := Project{Services: []Service{{Name: "x"}}}.Render()
 	if err == nil {

@@ -283,6 +283,82 @@ func (s *Server) handleProjectPods(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"pods": all})
 }
 
+// handleRedeployDeployment re-applies a past deployment's captured compose
+// snapshot to the cluster — a rollback to any historical deployment. For an
+// application deployment the snapshot references the exact prior image, so no
+// rebuild happens (true image rollback).
+func (s *Server) handleRedeployDeployment(w http.ResponseWriter, r *http.Request) {
+	old, err := s.Store.DeploymentByID(chi.URLParam(r, "deploymentID"))
+	if err != nil {
+		writeError(w, http.StatusNotFound, "deployment not found")
+		return
+	}
+	p, err := s.Store.ProjectByID(old.ProjectID)
+	if err != nil || s.requireOrgAccess(w, r, p.OrganizationID) == nil {
+		if err != nil {
+			writeError(w, http.StatusNotFound, "project not found")
+		}
+		return
+	}
+	if strings.TrimSpace(old.Source) == "" {
+		writeError(w, http.StatusBadRequest, "deployment has no source snapshot to redeploy")
+		return
+	}
+
+	// Resolve the isolated orcinus project this deployment targeted.
+	var target string
+	switch old.Kind {
+	case "application":
+		app, err := s.Store.ApplicationByID(old.ApplicationID)
+		if err != nil {
+			writeError(w, http.StatusNotFound, "application not found")
+			return
+		}
+		target = app.OrcinusProject
+	default: // compose | template
+		target = s.composeTarget(p, old.ComposeAppID)
+	}
+
+	dep := &store.Deployment{
+		ProjectID:     p.ID,
+		ComposeAppID:  old.ComposeAppID,
+		ApplicationID: old.ApplicationID,
+		Kind:          old.Kind,
+		Status:        store.DeployRunning,
+		Source:        old.Source,
+		ImageRef:      old.ImageRef,
+		CommitSHA:     old.CommitSHA,
+	}
+	if err := s.Store.CreateDeployment(dep); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	res, err := s.Orcinus.Deploy(r.Context(), orcinus.DeployRequest{
+		Source:    old.Source,
+		Project:   target,
+		Wait:      true,
+		ACMEEmail: r.URL.Query().Get("acmeEmail"),
+	})
+	if err != nil {
+		dep.Status = store.DeployFailed
+		dep.Error = err.Error()
+		_ = s.Store.UpdateDeployment(dep)
+		writeError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	dep.Status = store.DeploySuccess
+	dep.Applied = res.Applied
+	if b, e := json.Marshal(res.Installed); e == nil {
+		dep.Installed = string(b)
+	}
+	_ = s.Store.UpdateDeployment(dep)
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"deployment": dep, "applied": res.Applied, "rolledBackFrom": old.ID,
+	})
+}
+
 func (s *Server) handleListDeployments(w http.ResponseWriter, r *http.Request) {
 	p := s.loadProjectWithAccess(w, r)
 	if p == nil {

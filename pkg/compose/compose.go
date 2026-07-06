@@ -57,6 +57,29 @@ type Service struct {
 	AutoscaleMemory int // target memory utilization %
 	// Rollout enables progressive delivery (x-orcinus-rollout), e.g. "canary".
 	Rollout string
+
+	// Resource limits/reservations (compose deploy.resources → k8s
+	// limits/requests). CPU is in cores (e.g. "0.5"); memory like "512M".
+	CPULimit       string
+	MemLimit       string
+	CPUReservation string
+	MemReservation string
+
+	// Command overrides the image's default command (compose command → k8s args).
+	Command []string
+	// Path is the ingress path prefix (x-orcinus-path), default "/".
+	Path string
+	// Health, when set, adds an exec liveness probe (compose healthcheck).
+	Health *HealthCheck
+}
+
+// HealthCheck is an exec liveness probe rendered as a compose healthcheck.
+type HealthCheck struct {
+	// Test is the command, e.g. ["CMD", "curl", "-f", "http://localhost/"].
+	Test     []string
+	Interval string // e.g. "10s"
+	Timeout  string // e.g. "5s"
+	Retries  int
 }
 
 // Project is a set of services rendered as one compose file.
@@ -83,14 +106,41 @@ func (p Project) Render() (string, error) {
 		if len(s.Volumes) > 0 {
 			m["volumes"] = s.Volumes
 		}
+		if len(s.Command) > 0 {
+			m["command"] = s.Command
+		}
+		// deploy.* aggregates replicas + resource limits/reservations.
+		deploy := map[string]any{}
 		if s.Replicas > 0 {
-			m["deploy"] = map[string]any{"replicas": s.Replicas}
+			deploy["replicas"] = s.Replicas
+		}
+		if res := renderResources(s); len(res) > 0 {
+			deploy["resources"] = res
+		}
+		if len(deploy) > 0 {
+			m["deploy"] = deploy
+		}
+		if s.Health != nil && len(s.Health.Test) > 0 {
+			hc := map[string]any{"test": s.Health.Test}
+			if s.Health.Interval != "" {
+				hc["interval"] = s.Health.Interval
+			}
+			if s.Health.Timeout != "" {
+				hc["timeout"] = s.Health.Timeout
+			}
+			if s.Health.Retries > 0 {
+				hc["retries"] = s.Health.Retries
+			}
+			m["healthcheck"] = hc
 		}
 		if s.Expose != ExposeNone {
 			m["x-orcinus-expose"] = string(s.Expose)
 		}
 		if s.Host != "" {
 			m["x-orcinus-host"] = s.Host
+		}
+		if s.Path != "" {
+			m["x-orcinus-path"] = s.Path
 		}
 		if s.TLS {
 			// x-orcinus-tls is the cert-manager ClusterIssuer name.
@@ -141,4 +191,31 @@ func (p Project) Render() (string, error) {
 		return "", err
 	}
 	return string(b), nil
+}
+
+// renderResources builds the compose deploy.resources block (limits +
+// reservations) that orcinus maps to k8s resource limits/requests.
+func renderResources(s Service) map[string]any {
+	res := map[string]any{}
+	limits := map[string]any{}
+	if s.CPULimit != "" {
+		limits["cpus"] = s.CPULimit
+	}
+	if s.MemLimit != "" {
+		limits["memory"] = s.MemLimit
+	}
+	if len(limits) > 0 {
+		res["limits"] = limits
+	}
+	reservations := map[string]any{}
+	if s.CPUReservation != "" {
+		reservations["cpus"] = s.CPUReservation
+	}
+	if s.MemReservation != "" {
+		reservations["memory"] = s.MemReservation
+	}
+	if len(reservations) > 0 {
+		res["reservations"] = reservations
+	}
+	return res
 }

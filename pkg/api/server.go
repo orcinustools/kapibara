@@ -123,6 +123,7 @@ func (s *Server) routes() {
 			r.Delete("/apps/{appID}", s.handleDeleteApp)
 			r.Post("/apps/{appID}/deploy", s.handleDeployApp)
 			r.Get("/deployments/{deploymentID}", s.handleGetDeployment)
+			r.Post("/deployments/{deploymentID}/redeploy", s.handleRedeployDeployment)
 
 			// Secrets + plugins (M4): domains/TLS are configured per-app and
 			// rendered as x-orcinus-expose/host/tls in the generated compose.
