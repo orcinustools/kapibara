@@ -1,4 +1,7 @@
 // Real browser e2e for the kapibara SPA (Playwright + Chromium).
+// Exercises the Railway-style canvas project view: login → create project →
+// canvas empty state → New ▸ Compose → deploy → a service node appears →
+// click node → detail panel.
 import { chromium } from "playwright";
 
 const BASE = process.env.KAPIBARA_URL || "http://localhost:9000";
@@ -33,19 +36,29 @@ try {
   await page.getByRole("link", { name: pname }).waitFor({ timeout: 8000 });
   log("project created ✓");
 
-  // Open project → Compose tab → deploy.
+  // Open project → canvas empty state.
   await page.getByRole("link", { name: pname }).click();
-  await page.getByRole("link", { name: "Compose" }).click();
+  await page.getByText("No services yet").waitFor({ timeout: 8000 });
+  log("canvas empty state ✓");
+
+  // New ▸ Compose → deploy the default compose stack.
+  await page.getByRole("button", { name: "New" }).click();
+  await page.getByRole("menuitem", { name: "Compose" }).click();
   await page.getByRole("button", { name: "Deploy", exact: true }).click();
   log("compose deploy triggered, waiting…");
   await page.getByText(/Applied \d+ objects/).waitFor({ timeout: 60000 });
   const applied = await page.getByText(/Applied \d+ objects/).textContent();
   log("deploy result:", applied.trim(), "✓");
 
-  // Overview tab → expect a pod row.
-  await page.getByRole("link", { name: "Overview" }).click();
-  await page.getByText("web-", { exact: false }).first().waitFor({ timeout: 30000 });
-  log("pod visible in Overview ✓");
+  // Close the manage dialog; the compose unit should now be a canvas node.
+  await page.keyboard.press("Escape");
+  await page.getByText("docker-compose").first().waitFor({ timeout: 30000 });
+  log("service node visible on canvas ✓");
+
+  // Click the node → detail panel opens with per-unit actions.
+  await page.getByText("docker-compose").first().click();
+  await page.getByRole("button", { name: "Open full management" }).waitFor({ timeout: 8000 });
+  log("node detail panel opened ✓");
 
   log("ALL UI E2E CHECKS PASSED ✅");
 } catch (e) {

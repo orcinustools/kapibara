@@ -1,6 +1,11 @@
-import { useEffect, useRef, useState } from "react";
-import { useParams, useSearchParams } from "react-router-dom";
-import { Eye, EyeOff, GitBranch, Globe, Loader2, Plus, Trash2 } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { useParams } from "react-router-dom";
+import { ReactFlow, Background, Controls, MiniMap, type Node, type Edge } from "@xyflow/react";
+import "@xyflow/react/dist/style.css";
+import {
+  Boxes, ChevronDown, Database as DatabaseIcon, Eye, EyeOff, FileCode2, GitBranch, Globe,
+  Layers, Loader2, Plus, Rocket, RotateCcw, ScrollText, Scaling, ScrollText as LogIcon, Server, Trash2, X,
+} from "lucide-react";
 import { api, streamText, secretsApi, backupsApi, previewApi, saveAppEnv, saveAppDomain, type SecretSummary, type BackupSummary, type BackupCreate } from "../api";
 import { Card, Empty, ErrorBox, StatusPill } from "../ui";
 import { Badge } from "@/components/ui/badge";
@@ -9,53 +14,339 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import { TabBar } from "@/components/ui/tabs";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import { toast } from "@/components/ui/sonner";
+import { layoutUnits, nodeTypes, type Unit } from "../canvas";
 
 interface Project { id: string; name: string; orcinusProject: string; }
 
-const TABS = ["overview", "applications", "databases", "config", "domains", "compose", "deployments", "logs", "templates", "backups"];
-const TAB_LABELS: Record<string, string> = { config: "Env & Secrets", domains: "Domains & TLS" };
+// Management surfaces reachable from the toolbar / node panel. Each maps to one
+// of the existing project-scoped components, opened in a dialog so the canvas
+// stays the primary view and no capability is lost in the revamp.
+type ManageKind =
+  | "applications" | "databases" | "compose" | "deployments"
+  | "logs" | "config" | "domains" | "templates" | "backups" | "overview";
+
+const MANAGE: Record<ManageKind, { title: string; render: (id: string) => JSX.Element }> = {
+  applications: { title: "Applications", render: (id) => <Applications projectId={id} /> },
+  databases: { title: "Databases", render: (id) => <Databases projectId={id} /> },
+  compose: { title: "Docker Compose", render: (id) => <Compose projectId={id} /> },
+  deployments: { title: "Deployments", render: (id) => <Deployments projectId={id} /> },
+  logs: { title: "Logs", render: (id) => <Logs projectId={id} /> },
+  config: { title: "Env & Secrets", render: (id) => <EnvSecrets projectId={id} /> },
+  domains: { title: "Domains & TLS", render: (id) => <DomainsTLS projectId={id} /> },
+  templates: { title: "Templates", render: (id) => <Templates projectId={id} /> },
+  backups: { title: "Backups", render: (id) => <Backups projectId={id} /> },
+  overview: { title: "Pods & metrics", render: (id) => <Overview projectId={id} /> },
+};
 
 export function ProjectDetailPage() {
   const { id = "" } = useParams();
-  const [sp, setSp] = useSearchParams();
-  const tab = sp.get("tab") || "overview";
   const [project, setProject] = useState<Project | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const [units, setUnits] = useState<Unit[]>([]);
+  const [nodes, setNodes] = useState<Node[]>([]);
+  const [edges, setEdges] = useState<Edge[]>([]);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [manage, setManage] = useState<ManageKind | null>(null);
+  const [openDeployId, setOpenDeployId] = useState<string | null>(null);
 
   useEffect(() => {
     api.get<Project>(`/projects/${id}`).then(setProject).catch((e) => setErr(e.message));
   }, [id]);
 
+  // Build the unit list (apps + databases + compose) and pod statuses.
+  const reload = useCallback(async () => {
+    const [a, d, c, p] = await Promise.all([
+      api.get(`/projects/${id}/apps`).catch(() => ({ applications: [] })),
+      api.get(`/projects/${id}/databases`).catch(() => ({ databases: [] })),
+      api.get(`/projects/${id}/compose`).catch(() => ({ composeApps: [] })),
+      api.get(`/projects/${id}/pods`).catch(() => ({ pods: [] })),
+    ]);
+    const pods: any[] = p.pods || [];
+    const statusOf = (name: string) => pods.find((x) => x.service === slug(name))?.status;
+    const list: Unit[] = [
+      ...(a.applications || []).map((x: any): Unit => ({
+        id: x.id, kind: "application", name: x.name,
+        subtitle: x.buildType === "image" ? (x.image || "image") : `${x.buildType} · ${x.repoUrl || ""}`,
+        status: statusOf(x.name), raw: x,
+      })),
+      ...(d.databases || []).map((x: any): Unit => ({
+        id: x.id, kind: "database", name: x.name,
+        subtitle: `${x.engine}${x.version ? " " + x.version : ""}`, status: statusOf(x.name), raw: x,
+      })),
+      ...(c.composeApps || []).map((x: any): Unit => ({
+        id: x.id, kind: "compose", name: x.name, subtitle: "docker-compose", raw: x,
+      })),
+    ];
+    setUnits(list);
+  }, [id]);
+  useEffect(() => { reload(); }, [reload]);
+
+  // Recompute the graph layout whenever the units change. Edges connect every
+  // application to every database (they can reach each other in-project).
+  useEffect(() => {
+    const apps = units.filter((u) => u.kind === "application");
+    const dbs = units.filter((u) => u.kind === "database");
+    const e: Edge[] = [];
+    for (const app of apps) for (const db of dbs) {
+      e.push({ id: `${app.id}-${db.id}`, source: app.id, target: db.id, animated: true, style: { strokeDasharray: "4 4" } });
+    }
+    let cancelled = false;
+    layoutUnits(units, e.map((x) => ({ id: x.id, source: x.source, target: x.target })), selectedId).then((n) => {
+      if (!cancelled) { setNodes(n); setEdges(e); }
+    });
+    return () => { cancelled = true; };
+  }, [units, selectedId]);
+
+  const selected = units.find((u) => u.id === selectedId) || null;
+
+  function closeManage() { setManage(null); reload(); }
+
   if (err) return <ErrorBox error={err} />;
   if (!project) return <div className="text-sm text-muted-foreground">loading…</div>;
 
   return (
-    <>
-      <div className="mb-5 flex items-center gap-3">
-        <h1 className="text-xl font-semibold">{project.name}</h1>
+    <div className="flex h-[calc(100vh-3rem)] flex-col">
+      {/* Toolbar */}
+      <div className="flex items-center gap-3 border-b border-border pb-3">
+        <Layers className="size-5 text-primary" />
+        <h1 className="text-lg font-semibold">{project.name}</h1>
         <span className="font-mono text-xs text-muted-foreground">{project.orcinusProject}</span>
+        <div className="flex-1" />
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button size="sm"><Plus className="size-4" /> New <ChevronDown className="size-3.5" /></Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuItem onClick={() => setManage("applications")}><Boxes className="size-4" /> Application</DropdownMenuItem>
+            <DropdownMenuItem onClick={() => setManage("databases")}><DatabaseIcon className="size-4" /> Database</DropdownMenuItem>
+            <DropdownMenuItem onClick={() => setManage("compose")}><FileCode2 className="size-4" /> Compose</DropdownMenuItem>
+            <DropdownMenuItem onClick={() => setManage("templates")}><Layers className="size-4" /> From template</DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button size="sm" variant="secondary">Manage <ChevronDown className="size-3.5" /></Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            <DropdownMenuItem onClick={() => setManage("deployments")}><Rocket className="size-4" /> Deployments</DropdownMenuItem>
+            <DropdownMenuItem onClick={() => setManage("logs")}><LogIcon className="size-4" /> Logs</DropdownMenuItem>
+            <DropdownMenuItem onClick={() => setManage("overview")}><Server className="size-4" /> Pods &amp; metrics</DropdownMenuItem>
+            <DropdownMenuItem onClick={() => setManage("config")}><ScrollText className="size-4" /> Env &amp; Secrets</DropdownMenuItem>
+            <DropdownMenuItem onClick={() => setManage("domains")}><Globe className="size-4" /> Domains &amp; TLS</DropdownMenuItem>
+            <DropdownMenuItem onClick={() => setManage("backups")}><DatabaseIcon className="size-4" /> Backups</DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
-      <TabBar
-        tabs={TABS.map((t) => ({ key: t, label: TAB_LABELS[t] || t[0].toUpperCase() + t.slice(1) }))}
-        active={tab}
-        onSelect={(t) => setSp({ tab: t })}
-      />
-      {tab === "overview" && <Overview projectId={id} />}
-      {tab === "applications" && <Applications projectId={id} />}
-      {tab === "databases" && <Databases projectId={id} />}
-      {tab === "config" && <EnvSecrets projectId={id} />}
-      {tab === "domains" && <DomainsTLS projectId={id} />}
-      {tab === "compose" && <Compose projectId={id} />}
-      {tab === "deployments" && <Deployments projectId={id} />}
-      {tab === "logs" && <Logs projectId={id} />}
-      {tab === "templates" && <Templates projectId={id} />}
-      {tab === "backups" && <Backups projectId={id} />}
-    </>
+
+      {/* Canvas + detail panel */}
+      <div className="flex min-h-0 flex-1">
+        <div className="relative min-w-0 flex-1">
+          {units.length === 0 ? (
+            <div className="grid h-full place-items-center">
+              <div className="text-center">
+                <Layers className="mx-auto mb-3 size-10 text-muted-foreground/40" />
+                <p className="mb-1 text-sm font-medium">No services yet</p>
+                <p className="mb-4 text-xs text-muted-foreground">Add an application, database, or compose stack to this project.</p>
+                <Button size="sm" onClick={() => setManage("applications")}><Plus className="size-4" /> Add a service</Button>
+              </div>
+            </div>
+          ) : (
+            <ReactFlow
+              nodes={nodes}
+              edges={edges}
+              nodeTypes={nodeTypes}
+              onNodeClick={(_, n) => setSelectedId(n.id)}
+              onPaneClick={() => setSelectedId(null)}
+              fitView
+              proOptions={{ hideAttribution: true }}
+              className="bg-background"
+            >
+              <Background gap={18} className="!bg-background" />
+              <Controls showInteractive={false} />
+              <MiniMap pannable zoomable className="!bg-card" />
+            </ReactFlow>
+          )}
+        </div>
+        {selected && (
+          <UnitPanel
+            key={selected.id}
+            projectId={id}
+            unit={selected}
+            onClose={() => setSelectedId(null)}
+            onChanged={reload}
+            onManage={setManage}
+            onFollowDeploy={setOpenDeployId}
+            onLogs={() => setManage("logs")}
+          />
+        )}
+      </div>
+
+      {manage && (
+        <Dialog open onOpenChange={(o) => { if (!o) closeManage(); }}>
+          <DialogContent className="max-h-[86vh] max-w-5xl overflow-auto">
+            <DialogHeader>
+              <DialogTitle>{MANAGE[manage].title}</DialogTitle>
+            </DialogHeader>
+            {MANAGE[manage].render(id)}
+          </DialogContent>
+        </Dialog>
+      )}
+      <DeploymentDrawer deploymentId={openDeployId} onClose={() => setOpenDeployId(null)} />
+    </div>
+  );
+}
+
+// UnitPanel is the right-hand detail panel shown when a canvas node is selected.
+// It exposes the unit's identity + the primary day-2 actions (deploy, scale,
+// rollback, logs, delete) and deep-links into the full management surfaces.
+function UnitPanel({
+  projectId, unit, onClose, onChanged, onManage, onFollowDeploy, onLogs,
+}: {
+  projectId: string;
+  unit: Unit;
+  onClose: () => void;
+  onChanged: () => void;
+  onManage: (k: ManageKind) => void;
+  onFollowDeploy: (id: string) => void;
+  onLogs: (service: string) => void;
+}) {
+  const [busy, setBusy] = useState("");
+  const [confirmState, setConfirmState] = useState<ConfirmState>(null);
+  const [scaleOpen, setScaleOpen] = useState(false);
+  const [replicas, setReplicas] = useState("2");
+  const a = unit.raw;
+
+  async function deploy() {
+    setBusy("deploy");
+    try {
+      if (unit.kind === "application") {
+        const dep = await api.post(`/apps/${unit.id}/deploy`);
+        toast.success("Deploy started for " + unit.name);
+        if (dep?.id) onFollowDeploy(dep.id);
+      } else if (unit.kind === "database") {
+        await api.post(`/databases/${unit.id}/deploy`);
+        toast.success("Deploying " + unit.name);
+      } else {
+        const r = await api.post(`/projects/${projectId}/deploy`, { composeAppId: unit.id, wait: true });
+        toast.success(`Applied ${r.applied} objects`);
+      }
+      onChanged();
+    } catch (e) { toast.error((e as Error).message); }
+    finally { setBusy(""); }
+  }
+  async function doScale() {
+    const n = Number(replicas);
+    if (!Number.isFinite(n) || n < 0) { toast.error("Enter a valid replica count"); return; }
+    try {
+      await api.post(`/projects/${projectId}/services/${slug(unit.name)}/scale`, { replicas: n });
+      toast.success(`Scaled ${unit.name} to ${n} replica${n === 1 ? "" : "s"}`);
+      setScaleOpen(false); onChanged();
+    } catch (e) { toast.error((e as Error).message); }
+  }
+  function askRollback() {
+    setConfirmState({
+      title: `Roll back ${unit.name}?`,
+      description: "Reverts this service to its previous deployment revision.",
+      confirmLabel: "Roll back", variant: "destructive",
+      onConfirm: async () => {
+        try { await api.post(`/projects/${projectId}/services/${slug(unit.name)}/rollback`); toast.success("Rolled back " + unit.name); }
+        catch (e) { toast.error((e as Error).message); }
+      },
+    });
+  }
+  function askDelete() {
+    setConfirmState({
+      title: `Delete ${unit.name}?`,
+      description: "The unit and its deployed cluster resources will be removed. This cannot be undone.",
+      confirmLabel: "Delete", variant: "destructive",
+      onConfirm: async () => {
+        try {
+          await api.del(unit.kind === "application" ? `/apps/${unit.id}` : `/databases/${unit.id}`);
+          toast.success("Deleted " + unit.name);
+          onClose(); onChanged();
+        } catch (e) { toast.error((e as Error).message); }
+      },
+    });
+  }
+
+  return (
+    <aside className="flex w-[360px] shrink-0 flex-col overflow-y-auto border-l border-border bg-card">
+      <div className="flex items-start gap-2 border-b border-border p-4">
+        <div className="min-w-0 flex-1">
+          <div className="flex items-center gap-2">
+            <span className="truncate text-base font-semibold">{unit.name}</span>
+            {unit.status && <StatusPill status={unit.status} />}
+          </div>
+          <div className="mt-0.5 truncate font-mono text-xs text-muted-foreground">{unit.subtitle}</div>
+        </div>
+        <Button size="icon" variant="ghost" className="size-7" onClick={onClose} aria-label="Close panel"><X className="size-4" /></Button>
+      </div>
+
+      <div className="flex flex-col gap-3 p-4">
+        <Button onClick={deploy} disabled={busy === "deploy"}>
+          {busy === "deploy" ? <Loader2 className="size-4 animate-spin" /> : <Rocket className="size-4" />} Deploy
+        </Button>
+
+        {unit.kind === "database" && a.connectionString && (
+          <div className="rounded-md border border-border bg-background/60 p-2">
+            <div className="mb-1 text-[11px] font-medium text-muted-foreground">Connection string</div>
+            <code className="block break-all font-mono text-xs">{a.connectionString}</code>
+          </div>
+        )}
+        {unit.kind === "application" && a.domain && (
+          <a href={`${a.tls ? "https" : "http"}://${a.domain}`} target="_blank" rel="noreferrer"
+             className="flex items-center gap-1.5 text-sm text-primary hover:underline">
+            <Globe className="size-4" /> {a.domain}
+          </a>
+        )}
+
+        {unit.kind !== "compose" && (
+          <div className="grid grid-cols-2 gap-2">
+            <Button size="sm" variant="secondary" onClick={() => { setReplicas("2"); setScaleOpen(true); }}><Scaling className="size-4" /> Scale</Button>
+            <Button size="sm" variant="secondary" onClick={askRollback}><RotateCcw className="size-4" /> Rollback</Button>
+          </div>
+        )}
+        <Button size="sm" variant="secondary" onClick={() => onLogs(slug(unit.name))}><LogIcon className="size-4" /> Logs</Button>
+
+        {unit.kind === "application" && (
+          <div className="grid grid-cols-2 gap-2">
+            <Button size="sm" variant="outline" onClick={() => onManage("config")}><ScrollText className="size-4" /> Env</Button>
+            <Button size="sm" variant="outline" onClick={() => onManage("domains")}><Globe className="size-4" /> Domain</Button>
+          </div>
+        )}
+        {unit.kind === "database" && (
+          <Button size="sm" variant="outline" onClick={() => onManage("backups")}><DatabaseIcon className="size-4" /> Backups</Button>
+        )}
+
+        <Button size="sm" variant="outline" onClick={() => onManage(unit.kind === "compose" ? "compose" : unit.kind === "database" ? "databases" : "applications")}>
+          <GitBranch className="size-4" /> Open full management
+        </Button>
+
+        {unit.kind !== "compose" && (
+          <Button size="sm" variant="destructive" onClick={askDelete}><Trash2 className="size-4" /> Delete</Button>
+        )}
+      </div>
+
+      <ConfirmDialog state={confirmState} onClose={() => setConfirmState(null)} />
+      <Dialog open={scaleOpen} onOpenChange={setScaleOpen}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>Scale {unit.name}</DialogTitle>
+            <DialogDescription>Set the desired number of running replicas.</DialogDescription>
+          </DialogHeader>
+          <div><Label>Replicas</Label><Input type="number" min={0} value={replicas} onChange={(e) => setReplicas(e.target.value)} className="max-w-32" autoFocus /></div>
+          <DialogFooter>
+            <Button variant="secondary" onClick={() => setScaleOpen(false)}>Cancel</Button>
+            <Button onClick={doScale}>Scale</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </aside>
   );
 }
 
