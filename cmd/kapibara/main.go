@@ -27,6 +27,7 @@ func main() {
 		SilenceErrors: true,
 	}
 	root.AddCommand(serveCmd(), migrateCmd(), versionCmd())
+	root.AddCommand(cliCommands()...)
 
 	if err := root.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
