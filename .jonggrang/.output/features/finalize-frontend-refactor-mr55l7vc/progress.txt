@@ -1,0 +1,522 @@
+# Progress — finalize-frontend-refactor-mr55l7vc
+
+## Phase 1 — Baseline gates & e2e contract re-grep (task-001) — 2026-07-03
+
+### Baseline gates: ALL GREEN
+- `cd web && npm run build` (tsc -b + vite build) → EXIT 0. Emits to ../pkg/webui/dist:
+    index.html, assets/index-DiE_ReDN.css (21.00 kB), assets/index-BeVHoWZo.js (239.76 kB). 1816 modules, ~2.1s.
+- `make build` (= `ui` [npm install + npm run build] then `build-go` CGO_ENABLED=0 go build -o bin/kapibara) → EXIT 0.
+- `make test` (= `go test ./...`) → EXIT 0. Passing: pkg/api, pkg/compose, pkg/database, pkg/orcinus.
+    All other packages: "[no test files]". No failures.
+- NOTE: root Makefile is the build entrypoint (not web/). `make build` runs `make ui` first, so it
+    ALWAYS regenerates pkg/webui/dist from web/ source — the embedded bundle stays in sync when you use it.
+- NOTE: `make e2e` target exists (KAPIBARA_E2E=1 go test ./test/e2e/...) but ./test/e2e/ is absent — aspirational, out of scope.
+
+### e2e contract anchors — web/e2e.mjs (Playwright/Chromium, needs live server @ KAPIBARA_URL, default http://localhost:9000)
+Later phases may ADD UI but MUST NOT rename/remove any of these anchors (offline gate has no signal for e2e breakage):
+
+Placeholders (getByPlaceholder — exact string):
+  - "you@example.com"      (Auth login — email field)
+  - "min 8 chars"          (Auth login — password field)
+  - "new project name"     (Projects — create-project name input)
+
+Button labels (getByRole "button" — exact string):
+  - "Login"                (exact: true)
+  - "Create project"
+  - "Deploy"               (exact: true — Compose tab deploy)
+
+Link/nav labels (getByRole "link"):
+  - <project name>         (dynamic, e.g. "ui-e2e" — the project link on Projects list AND as nav)
+  - "Compose"              (project tab/nav → Compose)
+  - "Overview"             (project tab/nav → Overview)
+
+Text content (getByText):
+  - "Your projects"        (Projects page heading — post-login landmark)
+  - /Applied \d+ objects/  (regex — compose deploy result message, e.g. "Applied 3 objects")
+  - "web-"                 (substring/exact:false — pod row name prefix in Overview)
+
+CONTRACT RULES for later phases:
+  - Keep these exact strings and their ARIA roles (button vs link vs placeholder vs plain text).
+  - "Login" and "Deploy" are matched with exact:true — do not append/prefix text to those labels.
+  - Overview must keep rendering pod rows whose name starts with "web-".
+  - Compose deploy must keep surfacing a message matching /Applied \d+ objects/.
+  - Do NOT change /api/v1 call shapes the e2e flow depends on (login, create project, compose deploy, overview pods).
+
+### Verification convention for this feature
+  - Offline gate = `make build` + `make test` green (+ `cd web && npm run build` for the tsc typecheck).
+  - Live `node web/e2e.mjs` stays out-of-band (needs running server + orcinus cluster) — not run in these phases.
+
+## Phase 2 — shadcn primitives, sonner, Toaster & theme toggle (task-002) — 2026-07-03
+
+### What landed
+  - Installed deps: @radix-ui/react-{dialog,dropdown-menu,checkbox,tooltip}, sonner. Versions resolved:
+    dialog ^1.1.18, dropdown-menu ^2.1.19, checkbox ^1.3.6, tooltip ^1.2.11, sonner ^2.0.7 (30 pkgs added).
+  - New primitives in web/src/components/ui/: dialog, dropdown-menu, checkbox, tooltip, skeleton, sonner.
+    Followed existing conventions: forwardRef + displayName = Primitive.displayName, cn() merge, @/* alias,
+    tokens (bg-card/border-border/bg-popover/ring-ring). No cva needed for these (button/badge use cva).
+  - App.tsx: <Toaster/> mounted ONCE at the App root (rendered in a fragment BEFORE the auth/loading branch
+    so login-page toasts work too). Added useTheme() hook + sidebar toggle (Sun/Moon icon button).
+  - Import toast from "@/components/ui/sonner" (re-exported) — keeps one import site; later phases use it.
+
+### Theme system (IMPORTANT for later phases)
+  - Kapibara is DARK-FIRST: :root holds the dark tokens (unchanged, non-breaking). Light is OPT-IN via a
+    `.light` class on <html>. useTheme() default = "dark"; toggles document.documentElement.classList
+    .toggle("light", ...) and persists to localStorage key "kapibara-theme".
+  - This is the INVERSE of stock shadcn (which is light-first with a `.dark` opt-in). styles.css keeps the
+    existing `@custom-variant dark (&:is(.dark *))` but NOTHING sets `.dark` — dark is the base. So any
+    `dark:` utility variant would NOT fire. Style light overrides under `.light`, not dark: variants.
+  - sonner.tsx detects theme by checking for `.light` (else dark) via a MutationObserver on <html> class —
+    keeps toasts on-palette without next-themes.
+
+### Gotchas
+  - No tailwindcss-animate / tw-animate-css installed. shadcn's `data-[state=open]:animate-in` /`fade-in-0`
+    / `zoom-in-95` utilities DO NOT EXIST here — they are harmless no-op class strings (Tailwind v4 silently
+    ignores unknown utilities, build stays green). Real enter/exit motion is done dependency-free in
+    styles.css keyed on radix [data-state] attrs (kap-overlay-in/kap-content-in/kap-pop-in keyframes,
+    transform+opacity only, prefers-reduced-motion guard). If a later phase wants the utility classes to
+    work, add tw-animate-css (`@import`), don't hand-roll more keyframes.
+  - Build now emits new hashes: pkg/webui/dist/assets/index-DmT0C5of.js (276.55 kB, was 239.76) +
+    index-eEPzUA44.css (28.96 kB, was 21.00). dist NOT committed in this task — Phase 7 regenerates+commits.
+  - `npm install` reports 2 vulnerabilities (1 moderate, 1 high) in the new dep tree — left as-is (transitive).
+
+## Phase 2 — replace native alert/prompt/confirm w/ toasts + dialogs (task-003) — 2026-07-03
+
+### What landed (commit 6da1dea)
+  - ProjectDetail.tsx + Settings.tsx: ZERO native alert()/prompt()/confirm() left (grep clean).
+    All success/error feedback now goes through `toast` (import { toast } from "@/components/ui/sonner").
+  - Reusable `ConfirmDialog` + `ConfirmState` type defined at MODULE level in ProjectDetail.tsx (not shared
+    across files — task files array is only the 2 pages, so no new shared file). Applications + Databases each
+    hold their own `confirmState` and render <ConfirmDialog state=… onClose=… />. It gates delete (both) and
+    rollback (destructive variant). Cancel/backdrop close is blocked while onConfirm is in-flight (busy guard).
+  - Scale: prompt() → inline <Dialog> with a number <Input> (scaleTarget/replicas state in Applications).
+  - 2FA disable (Settings): prompt()+alert() → <Dialog> with a code <Input> (disableOpen/disableCode state),
+    toast.success on disable, toast.error on failure. Also added toast.success on 2FA enable (verify).
+  - Raw <input type="checkbox"> (TLS toggle) → shadcn <Checkbox>. IMPORTANT: radix Checkbox uses
+    `onCheckedChange={(v) => …}` (NOT onChange/e.target.checked); v is `boolean | "indeterminate"`, so coerce
+    with `v === true`.
+
+### Gotchas / conventions
+  - e2e anchors preserved: "Deploy" (exact button), Scale/Rollback labels unchanged — only handlers swapped.
+  - Deploy handler previously had NO error catch; added try/catch→toast.error + finally to clear busy.
+  - Build stays green (tsc -b + vite). Emitted new dist hashes (index-BYueKe-p.css / index-Dy_fkmD4.js) —
+    dist NOT committed here (Phase 7 regenerates+commits). Committed ONLY the 2 page files.
+  - The 2 pages carried pre-existing working-tree edits from the earlier WIP, so the commit diff is larger
+    (401+/176-) than task-003's own changes — expected; committing full current file state is correct.
+
+## Phase 2 — Skeleton loaders & consistent empty/error states (task-004) — 2026-07-03
+
+### What landed (commit 3ff611e)
+  - Projects/Cluster/Audit: added a `loading` state (default true) — these pages previously
+    rendered EMPTY TABLES during load with no signal. Now: loading → <Skeleton> rows,
+    error → ErrorBox (message) with the Empty state suppressed (`!err && <Empty/>`),
+    empty → <Empty/>, else the real Table. Distinguishing empty-vs-error was the key fix.
+  - Reusable `TableSkeleton({rows,cols})` helper defined at MODULE level in each of the 3 table
+    pages (NOT shared — task files array is only these 4 pages, and ui.tsx wasn't in scope).
+    It renders flex rows of `<Skeleton className="h-8 flex-1"/>`, marked aria-hidden.
+  - Toast feedback everywhere: import { toast } from "@/components/ui/sonner" (the re-export
+    convention from task-002). Load failures → toast.error + ErrorBox; mutations
+    (create/delete project, plugin install/remove) → toast.success/error. Delete/toggle handlers
+    previously swallowed errors — now wrapped in try/catch → toast.error.
+  - Cluster: added a "No plugins available." Empty state (plugins table had none before).
+
+### Auth is special — NO data-fetch, so NO skeleton
+  - Auth.tsx is a login FORM with no initial load; forcing a skeleton onto it would be AI-slop.
+    Instead added: toast.success on login/register, toast.error on failure, toast.message on
+    totpRequired, and a <Loader2 className="animate-spin"/> spinner inside the submit button
+    while `busy`. Error state already covered by ErrorBox. This is the honest read of
+    "skeletons during load" for a page that has no load phase.
+
+### e2e anchor safety (critical, no offline signal)
+  - Loader2 spinner in the Login button is aria-hidden, and the text stays exactly "Login"/
+    "Register", so getByRole("button",{name:"Login",exact:true}) is unaffected. The e2e flow
+    also clicks while busy=false (initial), so the label is "Login" at click time regardless.
+  - Verified all anchors present post-edit: "you@example.com", "min 8 chars", "new project name",
+    "Your projects", "Create project", "Login". Grep clean.
+
+### Verification
+  - `cd web && npm run build` (tsc -b + vite) → EXIT 0. New dist hashes emitted
+    (index-C484ppah.js 319.74 kB / index-xjrhuz7S.css 29.10 kB) — dist NOT committed
+    (Phase 7 regenerates+commits). Committed ONLY the 4 page files (334+/124-).
+
+## Phase 3 — Live-follow Logs tab (task-005) — 2026-07-03 (commit a16b17f)
+
+### What landed
+  - api.ts: NEW `streamText(path, {signal, onChunk})` — incremental ReadableStream reader.
+    Uses res.body.getReader() + TextDecoder({stream:true}), flushes decoder tail on close,
+    and ALWAYS reader.releaseLock() in finally (no leaked readers). Non-2xx / missing body →
+    throws ApiError. Auth via getToken() Bearer header, same as getText(). getText() stays for
+    one-shot text; streamText is follow-only.
+  - ProjectDetail.tsx Logs tab rewritten: Follow ↔ Stop toggle (Stop = destructive variant),
+    Clear button (disabled when empty), Auto-scroll <Checkbox> (default on). Service <Input>
+    disabled while following. Streams ?tail=200&follow=true.
+
+### Streaming/React gotchas (important for any future stream UI)
+  - Abort rejects reader.read() with a DOMException name==="AbortError" — swallow it; only
+    surface non-abort errors (setErr + toast.error). Don't check instanceof; check `.name`.
+  - Stale-reader guard: capture the AbortController in a local `ctrl`, and in finally only reset
+    following/abortRef if `abortRef.current === ctrl`. A newer follow() may have replaced the ref
+    while the old await was pending — without this guard the new stream's spinner gets cleared.
+  - follow() aborts any in-flight reader BEFORE starting a new one (prevents double streams).
+  - Unmount/tab-switch cleanup: useEffect(() => () => abortRef.current?.abort(), []). Tab switch
+    unmounts the Logs component (conditional render in ProjectDetail), so this fires on switch too.
+  - Buffer cap: LOG_BUFFER_MAX=200_000 chars, applied inside the functional setText updater
+    (next.slice(next.length - MAX)) — keeps the tail, bounds memory. No separate ref needed;
+    functional updater avoids stale-closure accumulation.
+  - Auto-scroll: needs a real ref on the scroll element, so Logs renders a native <pre ref>
+    (NOT the shared <Pre> helper, which doesn't forwardRef). useEffect on [text, autoScroll]
+    sets scrollTop = scrollHeight. Pre helper still used by Compose (line ~357), left intact.
+  - ErrorBox prop is `error` (string|null), NOT `message` — easy to get wrong.
+  - Checkbox: onCheckedChange={(v) => setAutoScroll(v === true)} (v is boolean|"indeterminate").
+  - Removed now-unused getText import from ProjectDetail (tsc noUnusedLocals would flag it).
+
+### e2e anchors: unaffected (Logs tab has no e2e contract anchors). Build green:
+  `cd web && npm run build` EXIT 0 → dist hashes index-CokIfZ-_.js (321.24 kB) /
+  index-BSsDOLsX.css (29.15 kB). dist NOT committed (Phase 7 regenerates+commits);
+  committed ONLY web/src/api.ts + web/src/pages/ProjectDetail.tsx.
+
+## Phase 3 — Deployment build-log viewer drawer (task-006) — 2026-07-03 (commit 3965b69)
+
+### IMPORTANT: the task premise was wrong about the transport — do NOT streamText here
+  - Task said "stream build log via /deployments/{id} reusing streamText". But the backend
+    route `GET /deployments/{deploymentID}` (server.go:125 → handlers_app.go:187 handleGetDeployment)
+    returns a JSON deployment SNAPSHOT via writeJSON — NOT a chunked/flushed text stream. There is
+    NO build-log streaming endpoint (only /projects/{p}/logs streams, for pod logs). The build log
+    lives in the Deployment.Log field (store/models.go:176, json:"log"); status is json:"status"
+    (values: pending|running|success|failed — models.go:156-159), error is json:"error".
+  - So streamText (which reads a raw ReadableStream and would render raw JSON) is the WRONG tool.
+    Correct "streaming" = POLL /deployments/{id} while status ∈ {pending,running}, re-reading the
+    growing dep.log snapshot; stop polling on terminal (success/failed). Documented the deviation
+    in the commit body. Don't blindly follow a task's transport assumption — verify the route first.
+
+### What landed
+  - api.ts: added optional `signal?: AbortSignal` to req() and api.get() (additive, non-breaking —
+    api.get(path, signal)). Lets the drawer abort its in-flight GET on close.
+  - ProjectDetail.tsx Deployments: rows now clickable (cursor-pointer + title="View build log",
+    onClick→setOpenId(d.id)). New module-level DeploymentDrawer (Dialog, max-w-3xl): fetches
+    /deployments/{id}, polls every DEPLOY_POLL_MS=1500 while DEPLOY_LIVE=Set{pending,running},
+    shows StatusPill + spinner(live) + image/commit/applied meta + build log <pre> + error via
+    ErrorBox. Close/backdrop → onClose → effect cleanup aborts ctrl + clears timer.
+
+### Poll-loop gotchas (mirror the task-005 stream guards)
+  - Guard every setState after await with an `active` flag (set false in cleanup) AND swallow
+    AbortError (e.name === "AbortError") — abort on close rejects the pending GET.
+  - Recurse via setTimeout INSIDE tick() (not setInterval) so a slow/failed request never stacks
+    overlapping polls; capture the timer id and clearTimeout in cleanup.
+  - Auto-scroll <pre> to bottom on [dep?.log] change (native ref, same reason as Logs — Pre helper
+    doesn't forwardRef).
+  - Deployments tab has NO e2e.mjs contract anchors — safe to restructure rows. No anchor strings
+    touched. `cd web && npm run build` EXIT 0 (index-CYgmSdQM.js 323.41 kB / index-DPxrEjWs.css
+    29.35 kB). dist NOT committed (Phase 7 regenerates+commits); committed ONLY api.ts + ProjectDetail.tsx.
+
+## Phase 4 — Env-vars & Secrets editor (task-007) — 2026-07-03 (commit 39a72cb)
+
+### IMPORTANT backend constraint discovered — env/secretKeys are WRITE-ONLY
+  - store.Application.Env and .SecretKeys are `json:"-"` (models.go:113,116) — they are ACCEPTED on
+    write (appReq.Env map / appReq.SecretKeys []string, applied in handleUpdateApp only when the field
+    is non-nil) but NEVER serialized in any response (handleGetApp/appView, handleListApps). There is
+    no MarshalJSON override. So the frontend CANNOT read an app's current env back.
+  - Consequence: the per-app Env editor is SET-ON-SAVE (replace), not read-modify-write. It opens with a
+    single blank row and PUT /apps/{id} {env, secretKeys} replaces the whole environment. Sending env={}
+    / secretKeys=[] clears them (Go unmarshals {}/[] to non-nil empty map/slice → the `if req.X != nil`
+    guards fire). Documented this in the UI copy ("stored values aren't shown back for security").
+  - This is a genuine limitation for NON-secret vars (can't see what's set). Left as-is — backend is out
+    of this task's file scope (only ProjectDetail.tsx + api.ts). A follow-up could expose a redacted
+    env-keys list (names only, no values) so the editor can prefill. NOT filed as a bug (arguably by
+    design for secret values); noted here for whoever does M4 polish.
+
+### Cluster /secrets is the fully-CRUD-able surface (values inherently masked)
+  - GET /secrets → {secrets:[{name, keys}]} — only a NAME + key COUNT, values never returned → masking
+    is free. POST /secrets {name, data:{k:v}} is create-OR-update and REPLACES the whole data map (no
+    per-key merge). DELETE /secrets/{name}. These are CLUSTER-scoped (orcinus-proxied), not project- or
+    app-scoped, despite the tab living under a project — there's no project param on the route.
+  - Editing an existing secret can't prefill values (masked) → the edit dialog locks the name and says
+    "re-enter every key — saving replaces the secret's full contents." New = fresh name + rows.
+
+### What landed
+  - api.ts (additive only): `SecretSummary` type, `secretsApi` {list(signal?)/put(name,data)/del(name)},
+    and `saveAppEnv(appId, env, secretKeys)` (PUT /apps/{id}). No contract changes.
+  - ProjectDetail.tsx: new "config" tab (label overridden to "Env & Secrets" via TAB_LABELS map, since
+    the TABS→label mapping is otherwise just capitalize-first). Renders <EnvSecrets> = <AppEnvEditor> +
+    <ClusterSecrets>. Shared KVRow type + module-level rowSeq/nextRowId()/blankRow() for stable React
+    keys on editable rows (index keys break focus on remove). Reused module-level ConfirmDialog for
+    secret delete. Masked values = <Input type="password"> + per-row Eye/EyeOff reveal toggle.
+
+### Gotchas / conventions
+  - Button has variant "ghost" & "outline" and base `gap-2` + `[&_svg]:size-4`, so <Button><Plus/> Add</Button>
+    spaces + sizes the icon automatically — no extra classes needed.
+  - ConfirmState type is declared at the BOTTOM of the file; ClusterSecrets uses useState<ConfirmState>
+    above it — fine, TS type aliases hoist (Applications/Databases already rely on this).
+  - Delete button sits inside a clickable (openEdit) row → e.stopPropagation() on its onClick so deleting
+    doesn't also open the edit dialog.
+  - e2e anchors: only ADDED a tab + components; renamed nothing. "Deploy"/"Compose"/"Overview" intact.
+  - Build green: `cd web && npm run build` EXIT 0 → index-C0guw9SV.js (332.45 kB) / index-DyDVCHk2.css
+    (29.53 kB). dist NOT committed (Phase 7 regenerates+commits); committed ONLY api.ts + ProjectDetail.tsx.
+
+## Phase 4 — Domains/TLS management UI (task-008) — 2026-07-03 (commit d0ea2c5)
+
+### IMPORTANT backend reality — one domain per app, NOT multi-domain
+  - store.Application has a SINGLE `Domain string` (json:"domain", models.go:110) + `TLS bool`
+    (json:"tls", :111). There is NO separate Domain entity, no /domains route, no cert-status
+    field/endpoint. Compose rendering is also single-host (x-orcinus-host, one per service).
+  - So the task premise "multiple domains manageable per app / add-remove" exceeds the backend:
+    it's ONE domain per app. Modeled the UI honestly as a per-app list where each app has 0-or-1
+    host — "Add domain" sets it, "Edit" changes it, "Remove" detaches. (Mirrors task-007's pattern
+    of documenting the backend truth rather than faking capability.)
+  - UNLIKE env (json:"-", write-only), domain+tls ARE serialized in the app LIST response
+    ({applications:[...]}) and GET, so the editor prefills current values — no read-back gap here.
+
+### orDefault caveat — "Remove" can't fully clear the host (backend gap)
+  - handleUpdateApp (handlers_app.go:145): `app.Domain = orDefault(req.Domain, app.Domain)` — an
+    empty domain string is IGNORED (keeps the old value), while `app.TLS = req.TLS` (:146) is
+    applied unconditionally. Consequence: saveAppDomain(id,"",false) reliably turns TLS OFF but the
+    host itself may persist server-side until a real value replaces it. Wired Remove to send
+    {domain:"",tls:false} anyway (correct frontend intent); the true fix is a backend clear path
+    (out of this task's file scope — only ProjectDetail.tsx + api.ts). Reported via `jonggrang bug`.
+  - Set/Edit + TLS on/off fully work through the same PUT — those are the primary, reliable actions.
+
+### Cert status is DERIVED (no backend signal)
+  - No cert-manager/ACME issuance state is exposed. certStatus(app) maps: no domain → "No domain"
+    (outline); domain + !tls → "HTTP only" (warning); domain + tls → "TLS · ACME managed" (success).
+    Copy in the UI says state is derived, not live — don't claim a cert is issued when unknown.
+
+### What landed
+  - api.ts (additive): `saveAppDomain(appId, domain, tls)` → PUT /apps/{id} {domain, tls}. No contract change.
+  - ProjectDetail.tsx: new "domains" tab (TAB_LABELS override → "Domains & TLS", same trick as config).
+    <DomainsTLS> renders a per-app table (Application | Host | TLS badge | Certificate badge | actions).
+    Host cell links to http(s)://{domain}. Edit/Add via a Dialog (host Input + TLS Checkbox); Remove via
+    the shared module-level ConfirmDialog (destructive). Reused Badge (imported from @/components/ui/badge
+    — NOTE: ui.tsx imports Badge but does NOT re-export it, so import from the component, not ../ui).
+
+### e2e + build
+  - Only ADDED a tab + component; renamed nothing. Anchors intact (Deploy/Compose/Overview/Login/Create project).
+  - `cd web && npm run build` EXIT 0 → index-C5kYTUoC.js (336.90 kB) / index-DyDVCHk2.css (29.53 kB, unchanged).
+    dist NOT committed (Phase 7 regenerates+commits); committed ONLY api.ts + ProjectDetail.tsx (182+/4-).
+
+## Phase 5 — Scale/rollback dialogs + autoscale/rollout fields (task-009) — 2026-07-03 (commit d71b4db)
+
+### Scale/rollback dialogs were ALREADY done in Phase 2 (task-003) — nothing to convert
+  - grep for prompt(/alert(/confirm( in ProjectDetail.tsx → CLEAN. Scale already uses a
+    <Dialog> (scaleTarget/replicas state) POSTing /projects/{p}/services/{slug(name)}/scale;
+    Rollback uses the shared ConfirmDialog POSTing …/rollback. So this task's real remaining
+    work was ONLY exposing the autoscale/rollout fields. Verified endpoints match server.go:144-145.
+
+### Autoscale/rollout fields — added to the "New application" create form only
+  - appReq (handlers_app.go:27-31) has autoscaleMin/Max/Cpu/Memory (int json:autoscaleMin/…/
+    autoscaleCpu/autoscaleMemory) + rollout (string). handleCreateApp DOES persist all 5
+    (:83-87). Added to form state + a full-width "Autoscaling & rollout" section (5-col grid:
+    Min/Max replicas, Target CPU %, Target memory %, Rollout <Select>). create() coerces the
+    four numbers with Number(x)||0 (empty string → 0 = autoscaler disabled = fixed replicas).
+  - IMPORTANT: handleUpdateApp (handlers_app.go:119-158) does NOT read autoscale/rollout from
+    appReq — it only applies name/build/repo/branch/ctx/dockerfile/image/port/replicas/domain/
+    tls/env/secretKeys. So these fields are CREATE-ONLY end-to-end. There is no app edit form in
+    the UI anyway (only create), so I added them to create only — an edit form would silently
+    drop them server-side. If a future task adds app-edit, the backend update handler must be
+    extended first (out of this task's file scope: only ProjectDetail.tsx).
+  - Rollout is a FREEFORM string (store size:32) forwarded to orcinus as x-orcinus-rollout
+    (compose.go:124). Only "canary" is documented (compose.go:58). Offered Rolling(default="")/
+    Canary/Blue-green in the Select — honest given it's a passthrough; orcinus interprets it.
+
+### e2e + build
+  - Only ADDED form fields; renamed nothing. Anchors intact (Deploy/Compose/Overview/Login/
+    Create project — "Create application" is NOT an e2e anchor). Build green:
+    `cd web && npm run build` EXIT 0 → index-CMCWgq_n.js (338.70 kB) / index-DT0yQEVa.css (29.73 kB).
+    dist NOT committed (Phase 7 regenerates); committed ONLY web/src/pages/ProjectDetail.tsx (48+/3-).
+    api.ts was in the task files array but needed NO change (no new API helper — plain api.post).
+
+## Phase 5 — CPU/RAM metric bars in Overview (task-010) — 2026-07-03 (commit pending)
+
+### What landed
+  - New module-level MetricBar (ProjectDetail.tsx): dependency-free CSS meter =
+    track (h-1.5 rounded-full bg-muted) + fill div width:{pct}% (bg-primary=CPU,
+    bg-success=mem) + numeric label (tabular-nums text-muted-foreground). role=
+    progressbar + aria-valuenow/min/max + aria-label for a11y. NO recharts / no new dep.
+  - Overview pods table CPU/Memory cells now render MetricBar instead of raw
+    `${m.cpuMillicores}m` / `${Mi}`. Absolute value kept as the right-aligned label
+    so nothing is lost visually.
+
+### Scaling decision (important — no limits are exposed)
+  - /projects/{p}/metrics returns instantaneous cpuMillicores + memoryBytes only;
+    there are NO k8s requests/limits in the payload to normalize against. So ratio
+    is computed relative to the BUSIEST pod in the current set: maxCpu/maxMem =
+    Math.max(1, ...metrics.map(...)) (the 1 floor avoids /0 and an all-full bar when
+    every value is 0). Bars are therefore comparative-across-peers, not %-of-limit —
+    the honest read given the data. Missing metric → em-dash (muted).
+
+### Build/e2e
+  - Only changed the two metric cells + added a helper; pod rows still render "web-"
+    prefix (e2e anchor intact), no labels/roles renamed. `cd web && npm run build`
+    EXIT 0 → index-Doj68ozp.js (339.74 kB) / index-BPpqHABu.css (30.79 kB). dist NOT
+    committed (Phase 7 regenerates); committed ONLY web/src/pages/ProjectDetail.tsx.
+  - styles.css was in the task files array but needed NO change — Tailwind utilities
+    + inline width style cover it dependency-free.
+
+## Phase 6 — Backup cron schedule + S3 destination UI (task-011) — 2026-07-03 (commit 41a1e01)
+
+### A minimal Backups tab ALREADY existed — this task expanded it, not created it
+  - TABS already had "backups" and a bare Backups component (local-only create,
+    no cron, no S3, used a raw `msg` div). Rewrote it into a full manager:
+    cron schedule presets (hourly/daily/weekly/monthly) + a "Custom…" cron
+    <Input>, local|s3 destination <Select>, S3 endpoint/bucket/region/accessKey/
+    secretKey/TLS inputs (shown only when destination==="s3"), enable-schedule
+    <Checkbox>, and per-row "Run now". Swapped `msg` → toast (matches the refactor).
+
+### Backend contract (pkg/api/handlers_backup.go + store/models.go:194)
+  - POST /projects/{p}/backups {databaseId, cron, destination(local|s3),
+    s3Config:{endpoint,bucket,region,accessKey,secretKey,secure}, enabled}.
+    s3Config keys are STRINGS (secure is "true"/"false" — pkg/backup/s3.go reads
+    cfg["secure"]!="false", i.e. defaults to secure). GET returns {backups:[...]}.
+    POST /backups/{id}/run → {status,path,backup}; server records lastStatus/
+    lastPath/lastError/lastRunAt on the config.
+  - IMPORTANT: store.Backup.S3Config is `json:"-"` (models.go:203) — write-only,
+    same pattern as app env (task-007) & notification Config. Endpoint/creds are
+    ACCEPTED on create but NEVER returned by the list, so the UI can't prefill
+    them for edit. There is also NO update route (only create/list/run) — so a
+    config is create-or-recreate, not editable. Modeled create-only; documented
+    "credentials never shown back" in the UI copy + api.ts. Cron/destination/
+    enabled/last-* fields ARE serialized and shown in the list.
+
+### Gotchas / conventions
+  - Badge has NO "secondary" variant — valid: default|success|destructive|
+    warning|outline (badge.tsx:8-15). StatusPill maps unknown status → "outline",
+    so status="enabled" renders fine as a neutral pill.
+  - Added additive backupsApi {list(p,signal?),create(p,body),run(id)} + BackupSummary/
+    BackupCreate types to api.ts (mirrors secretsApi). No contract changes.
+  - e2e anchors untouched (Backups tab has none; renamed nothing).
+  - `cd web && npm run build` EXIT 0 → index-CyEAYumU.js (344.51 kB) /
+    index-CsCKrj5Z.css (31.05 kB). dist NOT committed (Phase 7 regenerates);
+    committed ONLY web/src/pages/ProjectDetail.tsx + web/src/api.ts (243+/28-).
+
+## Phase 6 — Preview deploy trigger + teardown UI (task-012) — 2026-07-03 (commit 35b7fd0)
+
+### Backend contract (pkg/api/handlers_m9.go + server.go:164-165)
+  - POST /apps/{appID}/preview {branch} → 202 {deploymentId, previewProject, branch,
+    status:"deploying"}. Deploys the app's chosen branch into an ISOLATED ephemeral
+    orcinus project named `{project.OrcinusProject}-preview-{sanitizeDNS(branch)}`.
+  - DELETE /projects/{projectID}/preview/{branch} → 200 {status:"torn-down", previewProject}.
+    Teardown is keyed by PROJECT + BRANCH (not app id) — calls Orcinus.DeleteProject on the
+    ephemeral name. sanitizeDNS lowercases + replaces non [a-z0-9-] with '-'.
+  - CRITICAL GAP: there is NO GET/list route for previews. The backend does not persist a
+    queryable preview record — the only handle you get back is the deploymentId + the derived
+    previewProject name. So the UI can only track previews triggered IN THE CURRENT SESSION;
+    they vanish on reload. Documented this in the UI copy + api.ts (previewApi). "Show preview
+    URL" from the task is not literally possible — no URL is returned (the ephemeral project's
+    ingress host is unknowable from the API), so I surface the previewProject name + live
+    deploy status instead of fabricating a URL.
+
+### What landed
+  - api.ts (additive): `PreviewDeploy` type + `previewApi {deploy(appId,branch), teardown(projectId,branch)}`.
+    Mirrors the secretsApi/backupsApi helper style. No contract changes.
+  - ProjectDetail.tsx Applications: new per-row "Preview" button (GitBranch icon, secondary) →
+    opens a branch-input Dialog (prefilled from app.branch||"main", Enter submits) → previewApi.deploy →
+    pushes a PreviewEntry into session state. A "Preview environments" Card (only when previews>0)
+    lists app/branch/previewProject/status with "View log" (reuses DeploymentDrawer via a new
+    openDeployId state in Applications) + "Tear down" (shared ConfirmDialog, destructive).
+  - New module-level PreviewEntry type + PreviewStatus component: polls /deployments/{id} while
+    status ∈ {pending,running} (reuses DEPLOY_LIVE/DEPLOY_POLL_MS + the same active-flag/abort
+    guards as DeploymentDrawer) and renders StatusPill + spinner.
+
+### Gotchas / conventions
+  - DeploymentDrawer is now rendered in TWO places (Deployments tab + Applications tab) — separate
+    instances, independent openId state, no conflict (only one dialog open at a time per tab).
+  - PreviewEntry (type) + PreviewStatus (function decl) are DEFINED BELOW Applications but USED
+    inside it — fine, both hoist (type aliases + function declarations). DEPLOY_LIVE/DEPLOY_POLL_MS
+    are `const` defined further down but only referenced at runtime inside PreviewStatus, so no TDZ.
+  - e2e anchors intact: only ADDED a "Preview" button + dialogs; "Deploy" (exact) unchanged, no renames.
+  - `cd web && npm run build` EXIT 0 → index-BEPlGRxj.js (348.51 kB, was 344.51) / index-CsCKrj5Z.css
+    (31.05 kB, unchanged). dist NOT committed (Phase 7 regenerates); committed ONLY ProjectDetail.tsx + api.ts.
+
+## Phase 6 — Org member / RBAC management surface (task-013) — 2026-07-03 — DEFERRED
+
+DECISION: Deferred. Backend endpoints are INSUFFICIENT to build this surface without
+half-building. Per task instruction ("if the backend endpoints are insufficient,
+document the gap and defer rather than half-build"), no UI was added. No code changed;
+`cd web && npm run build` remains green.
+
+### Backend audit (why deferred)
+Routes in pkg/api/server.go (lines 99–165) expose orgs create/list only — there is NO
+member-management surface:
+  - NO  GET    /orgs/{orgID}/members            (list members + roles)
+  - NO  POST   /orgs/{orgID}/members            (invite/add by email)
+  - NO  PUT    /orgs/{orgID}/members/{userID}   (change role)
+  - NO  DELETE /orgs/{orgID}/members/{userID}   (remove)
+Store (pkg/store/repo.go) only has:
+  - CreateMembership(m)         — used internally at org creation (handlers_auth.go:76)
+                                  and project creation (handlers_project.go:39), role=owner
+  - Membership(userID, orgID)   — single-row lookup (used by requireOrgAccess middleware)
+  - OrgsForUser(userID)         — orgs the caller belongs to
+Missing store methods: MembershipsForOrg (list), UserByEmail (resolve invitee),
+UpdateMembershipRole, DeleteMembership. Roles exist as a type (RoleOwner/RoleAdmin/
+RoleMember in models.go:30-32) but nothing lets an owner/admin manage other members.
+
+### What a real implementation needs (follow-up backend vertical)
+1. store: MembershipsForOrg(orgID) (join users for email/name), UserByEmail(email),
+   UpdateMembershipRole(userID,orgID,role), DeleteMembership(userID,orgID).
+2. handlers: handleListMembers / handleAddMember / handleUpdateMemberRole /
+   handleRemoveMember, with RBAC guard (only owner/admin mutate; can't remove/demote
+   the last owner).
+3. routes: the 4 routes above under the authed router group.
+4. THEN frontend: additive helpers in web/src/api.ts (membersApi), a Members section in
+   web/src/pages/Settings.tsx, optional nav entry in web/src/App.tsx.
+This is a backend+frontend vertical, out of scope for this frontend-only refactor
+feature — same class of deferral as git-provider OAuth (plan "Out of Scope").
+
+### Files NOT modified (deferral): web/src/pages/Settings.tsx, web/src/App.tsx, web/src/api.ts
+
+## Phase 7 — Regenerate embedded dist, verify, atomic commit (task-014) — 2026-07-03 (commit 515b106)
+
+### What was still uncommitted (the seal)
+  - Earlier phases (task-002+) committed ONLY the refactored pages/api/App + the NEW primitives
+    they introduced (checkbox/dialog/dropdown-menu/skeleton/sonner/tooltip). Never committed:
+    the BASE shadcn primitives (badge/button/card/input/label/select/table/tabs/textarea),
+    web/src/lib/utils.ts (cn helper), the @/* path-alias config (tsconfig baseUrl+paths,
+    vite resolve.alias + @tailwindcss/vite plugin), dark-first <html class="dark">, ui.tsx
+    bridge edits, and the regenerated pkg/webui/dist. task-014 committed all of these as ONE
+    atomic feat(web) commit (19 files, 564+/91-).
+  - package.json / package-lock.json needed NO change here — `npm install` reported "up to date"
+    (all deps were committed in their introducing phases). Task files array listed them but,
+    like api.ts in task-009, they were a no-op this phase. Don't force a lockfile churn.
+
+### Embedded dist is deterministic — verify with a re-run, not faith
+  - `make ui` uses vite content-hash filenames. Ran `make ui` a SECOND time after committing and
+    `git status pkg/webui/dist` was EMPTY → the committed bundle exactly matches source (no drift).
+    This is the real acceptance check for "embedded dist matches source". Final hashes:
+    index-BEPlGRxj.js (348.51 kB) / index-CsCKrj5Z.css (31.05 kB). Old assets
+    (index-BuKQ_l9m.css / index-BuidWsGJ.js) deleted in the same commit.
+  - make build = ui → build-go, make test = go test ./... — BOTH GREEN. Did NOT edit embed.go
+    (it's the contract; go:embed picks up dist automatically).
+
+### Staging hygiene (critical — many untracked non-feature dirs present)
+  - The worktree has lots of agent/tooling noise: .jonggrang/ .claude/ .codex/ .opencode/ hooks/
+    AGENTS.md CLAUDE.md web/.jonggrang/ and a .gitignore edit (adds .jonggrang/.ephemeral etc).
+    NONE of these are the frontend refactor — staged with EXPLICIT paths (never git add -A/.)
+    so only the 19 feature files landed. Left .gitignore + all tooling dirs unstaged.
+
+### Feature COMPLETE: all M2–M9 UI phases committed; only task-013 (org/RBAC) deferred (backend gap).
+
+## Phase 8 — Log learnings to progress.txt (task-015) — 2026-07-03
+
+Consolidated the three durable learnings for the NEXT session into .jonggrang/progress.txt
+(the top-level session pointer, which previously held only Phase 1):
+  1. Real audited M1–M9 state — backend ~90% real & compiling; the gap was the FRONTEND (whole
+     backend capabilities had no UI). Genuinely missing/deferred: git-provider OAuth (M3),
+     metrics history (M6), org member/RBAC (M1, task-013). Recurring `json:"-"` write-only
+     fields (app Env/SecretKeys, Backup.S3Config, notification Config) + create-only
+     autoscale/rollout can't be read back → model as set-on-save and say so in UI copy.
+  2. web/e2e.mjs contract fragility — exact-string + ARIA-role anchors with NO offline signal;
+     the full anchor list + rules ("Login"/"Deploy" exact:true, "web-" pod prefix, /Applied \d+
+     objects/) is restated there. ADD UI, never rename; re-grep after each page edit.
+  3. Embedded-dist sync rule — binary serves pkg/webui/dist via go:embed; source edits alone
+     serve STALE UI. Run `make ui` (or `make build`, which chains ui→build-go); verify sync by
+     re-running `make ui` and confirming `git status pkg/webui/dist` is EMPTY (vite deterministic).
+
+This task changed ONLY .jonggrang/progress.txt (jonggrang state) — no code, so no commit
+(per rule: never `git add` .jonggrang/). No typecheck/test applies to a state-only doc change.
+
+## Phase 14 (testing) — 2026-07-03
+Offline gate T1–T5 all PASS (see TEST-RESULTS.md):
+  T1 npm run build exit 0 (1874 modules) · T2 e2e anchors all present (no MISSING) ·
+  T3 make ui ×2 → git status pkg/webui/dist EMPTY (dist sealed) · T4 make test green ·
+  T5 make build exit 0, dist still empty.
+validation.tests_passed = true. S1–S12 browser/live-cluster smoke DEFERRED (out-of-band,
+needs running binary vs orcinus; not part of agreed offline acceptance). No frontend unit-test
+framework added (would exceed SMALL scope per TEST-PLAN §3).

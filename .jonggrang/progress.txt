@@ -1,0 +1,107 @@
+# Progress — finalize-frontend-refactor-mr55l7vc
+
+## Phase 1 — Baseline gates & e2e contract re-grep (task-001) — 2026-07-03
+
+### Baseline gates: ALL GREEN
+- `cd web && npm run build` (tsc -b + vite build) → EXIT 0. Emits to ../pkg/webui/dist:
+    index.html, assets/index-DiE_ReDN.css (21.00 kB), assets/index-BeVHoWZo.js (239.76 kB). 1816 modules, ~2.1s.
+- `make build` (= `ui` [npm install + npm run build] then `build-go` CGO_ENABLED=0 go build -o bin/kapibara) → EXIT 0.
+- `make test` (= `go test ./...`) → EXIT 0. Passing: pkg/api, pkg/compose, pkg/database, pkg/orcinus.
+    All other packages: "[no test files]". No failures.
+- NOTE: root Makefile is the build entrypoint (not web/). `make build` runs `make ui` first, so it
+    ALWAYS regenerates pkg/webui/dist from web/ source — the embedded bundle stays in sync when you use it.
+- NOTE: `make e2e` target exists (KAPIBARA_E2E=1 go test ./test/e2e/...) but ./test/e2e/ is absent — aspirational, out of scope.
+
+### e2e contract anchors — web/e2e.mjs (Playwright/Chromium, needs live server @ KAPIBARA_URL, default http://localhost:9000)
+Later phases may ADD UI but MUST NOT rename/remove any of these anchors (offline gate has no signal for e2e breakage):
+
+Placeholders (getByPlaceholder — exact string):
+  - "you@example.com"      (Auth login — email field)
+  - "min 8 chars"          (Auth login — password field)
+  - "new project name"     (Projects — create-project name input)
+
+Button labels (getByRole "button" — exact string):
+  - "Login"                (exact: true)
+  - "Create project"
+  - "Deploy"               (exact: true — Compose tab deploy)
+
+Link/nav labels (getByRole "link"):
+  - <project name>         (dynamic, e.g. "ui-e2e" — the project link on Projects list AND as nav)
+  - "Compose"              (project tab/nav → Compose)
+  - "Overview"             (project tab/nav → Overview)
+
+Text content (getByText):
+  - "Your projects"        (Projects page heading — post-login landmark)
+  - /Applied \d+ objects/  (regex — compose deploy result message, e.g. "Applied 3 objects")
+  - "web-"                 (substring/exact:false — pod row name prefix in Overview)
+
+CONTRACT RULES for later phases:
+  - Keep these exact strings and their ARIA roles (button vs link vs placeholder vs plain text).
+  - "Login" and "Deploy" are matched with exact:true — do not append/prefix text to those labels.
+  - Overview must keep rendering pod rows whose name starts with "web-".
+  - Compose deploy must keep surfacing a message matching /Applied \d+ objects/.
+  - Do NOT change /api/v1 call shapes the e2e flow depends on (login, create project, compose deploy, overview pods).
+
+### Verification convention for this feature
+  - Offline gate = `make build` + `make test` green (+ `cd web && npm run build` for the tsc typecheck).
+  - Live `node web/e2e.mjs` stays out-of-band (needs running server + orcinus cluster) — not run in these phases.
+
+## Phase 8 — Consolidated learnings for the next session (task-015) — 2026-07-03
+
+Three durable takeaways from finalize-frontend-refactor. (Full phase-by-phase detail lives
+in .jonggrang/.output/features/finalize-frontend-refactor-mr55l7vc/progress.txt.)
+
+### 1. The REAL audited M1–M9 state (implemented vs genuinely missing)
+The README's "all M0–M9 done & e2e-verified" is misleading. Audit reality:
+  - Backend is ~90% real. Routes + handlers EXIST and compile for: auth/2FA, orgs/projects,
+    compose deploy, git+Dockerfile+Nixpacks build (pkg/build shells out to docker/nixpacks →
+    imports into k3s containerd), databases, secrets/plugins, logs (HTTP chunked-flush stream),
+    metrics (metrics-server), templates, backups, notifications, nodes, audit, preview
+    deploy/teardown, scale/rollback. These did NOT need re-implementing.
+  - The gap was overwhelmingly the FRONTEND, not the backend. Whole backend capabilities had
+    NO UI at all and were wired up in this feature: live-follow logs (M3), deployment build-log
+    viewer (M3/M6), env/secrets editor (M4), domains/TLS management (M4), autoscale/rollout
+    fields (M6 — create-only), CPU/RAM metric bars (M6), backup cron + S3 destination (M8),
+    preview deploy trigger + teardown (M9). UX was also crude (native alert/prompt/confirm,
+    no toasts/dialogs/skeletons, raw checkbox, no theme toggle) — all replaced.
+  - GENUINELY missing / deferred (needs backend work, out of this frontend feature's scope):
+      * git-provider OAuth/App connect + repo picker (M3) — needs a new `GitProvider` store
+        entity + OAuth flow; only raw-URL/token shallow clone exists today.
+      * metrics time-series history (M6) — payload is INSTANTANEOUS cpuMillicores/memoryBytes
+        only, no requests/limits → metric bars are comparative-across-peers, not %-of-limit.
+      * org member / RBAC management surface (M1) — DEFERRED (task-013). server.go exposes
+        orgs create/list only; NO member routes, and store lacks MembershipsForOrg/UserByEmail/
+        UpdateMembershipRole/DeleteMembership. A real impl is a backend+frontend vertical.
+  - Recurring backend shape to remember: several fields are WRITE-ONLY (`json:"-"`) — they are
+    accepted on write but NEVER returned, so the UI cannot read them back / prefill for edit:
+    Application.Env + .SecretKeys (models.go:113,116), Backup.S3Config (models.go:203), and
+    notification Config. Also handleUpdateApp does NOT read autoscale/rollout (create-only), and
+    orDefault() ignores empty strings so domain can't be fully cleared via update. Model these
+    surfaces as set-on-save / create-only and SAY SO in the UI copy — don't fake read-back.
+
+### 2. web/e2e.mjs contract fragility — the offline gate CANNOT catch e2e breakage
+  - web/e2e.mjs (Playwright, needs a LIVE server @ KAPIBARA_URL, not run in these phases) asserts
+    a set of EXACT strings tied to specific ARIA ROLES. `make build`/`make test`/`npm run build`
+    all stay green even if you rename one of these — there is NO offline signal that e2e broke.
+  - Binding anchors (do NOT rename/remove; ADD UI only):
+      placeholders (exact): "you@example.com", "min 8 chars", "new project name"
+      buttons (getByRole button): "Login" (exact:true), "Create project", "Deploy" (exact:true)
+      links (getByRole link): <project name> (dynamic), "Compose", "Overview"
+      text (getByText): "Your projects", /Applied \d+ objects/ (regex), "web-" (pod-row prefix)
+  - Rules that bit us / to keep: "Login" & "Deploy" use exact:true → never append/prefix text
+    (spinners must be aria-hidden and the label text unchanged). Overview must keep rendering pod
+    rows whose name starts with "web-". Compose deploy must keep surfacing /Applied \d+ objects/.
+    Don't change the /api/v1 call shapes the flow depends on (login, create project, compose
+    deploy, overview pods). After any page edit, re-grep these strings before considering it done.
+
+### 3. Embedded-dist sync rule — source edits alone serve STALE UI
+  - The Go binary serves the SPA from pkg/webui/dist via pkg/webui/embed.go (go:embed). Editing
+    web/src/** does NOT change what the binary serves until the dist bundle is regenerated.
+  - Fix: run `make ui` (npm install + npm run build → emits ../pkg/webui/dist with content-hashed
+    filenames) — or just `make build`, which chains `ui` → `build-go`, so it ALWAYS rebuilds dist
+    first. Never hand-edit dist or embed.go.
+  - During phases 2–6 we committed ONLY source (pages/api/components) and left dist regeneration to
+    phase 7 (task-014), which regenerated + committed the bundle as one atomic seal. Verify sync by
+    running `make ui` a SECOND time and confirming `git status pkg/webui/dist` is EMPTY (vite is
+    deterministic; empty diff = committed bundle exactly matches source). This is the real
+    acceptance check for "embedded dist matches source" — verify, don't take it on faith.
