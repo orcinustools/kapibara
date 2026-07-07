@@ -74,11 +74,15 @@ func (s Spec) Service() (compose.Service, string, error) {
 	}
 	volName := s.Name + "-data"
 	svc := compose.Service{
-		Name:       s.Name,
-		Image:      s.Image(),
+		Name:  s.Name,
+		Image: s.Image(),
+		// Publish the engine port so orcinus creates a ClusterIP Service — this
+		// is what gives the database its in-cluster DNS name (<name>:<port>)
+		// that applications connect to. Without ports there is no Service.
+		Ports:      []string{fmt.Sprintf("%d", m.port)},
 		Controller: compose.ControllerStatefulSet,
 		VolumeSize: s.VolumeSize,
-		Expose:     compose.ExposeCluster, // reachable inside the cluster
+		Expose:     compose.ExposeCluster, // ClusterIP (in-cluster only, no ingress)
 		Volumes:    []string{volName + ":" + m.dataPath},
 		Env:        map[string]string{},
 	}
