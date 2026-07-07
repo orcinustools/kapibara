@@ -6,7 +6,10 @@ const BASE = process.env.KAPIBARA_URL || "http://localhost:9010";
 const EMAIL = "ibnu@biznetgio.com";
 const PASS = "supersecret";
 const REPO = "https://github.com/anak10thn/kapibara-git-e2e.git";
-const PROJECT = "uigit";
+// Unique per run so the suite is repeatable against a persistent server.
+const RUN = process.env.E2E_RUN || String(Date.now()).slice(-6);
+const PROJECT = `uigit-${RUN}`;
+const APP = `webgit${RUN}`;
 
 const log = (...a) => console.log("[gitui]", ...a);
 const browser = await chromium.launch();
@@ -43,11 +46,11 @@ try {
   log("git repo field visible ✓");
 
   // Fill the form: name, repo, port.
-  await dialog.getByRole("textbox").first().fill("webgit");
+  await dialog.getByRole("textbox").first().fill(APP);
   await dialog.getByPlaceholder("https://github.com/user/repo").fill(REPO);
   await dialog.getByRole("spinbutton").first().fill("8080");
   await dialog.getByRole("button", { name: "Create application" }).click();
-  await page.getByText("webgit").first().waitFor({ timeout: 8000 });
+  await page.getByText(APP).first().waitFor({ timeout: 8000 });
   log("git app created via dashboard ✓");
 
   // Deploy → build-log drawer opens; wait for a successful build.
