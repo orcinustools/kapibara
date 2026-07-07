@@ -6,7 +6,7 @@ behind a public domain with automatic TLS, and connect that app to the
 databases — all from the CLI.
 
 It mirrors an end-to-end run verified against a live `orcinus` cluster where
-`*.apps.jonggrang.dev` points at the server and cert-manager issues Let's
+`*.apps.example.com` points at the server and cert-manager issues Let's
 Encrypt certificates.
 
 ---
@@ -170,7 +170,7 @@ kapibara secret put demo-db --data DATABASE_URL="$PG_CS" --data REDIS_URL="$RD_C
 # a web app on a public domain that connects to postgres
 kapibara app deploy --project demo --name adminer \
   --build image --image adminer --port 8080 \
-  --domain adminer.apps.jonggrang.dev --tls --env ADMINER_DEFAULT_SERVER=pg
+  --domain adminer.apps.example.com --tls --env ADMINER_DEFAULT_SERVER=pg
 
 # an app that carries the DB creds (DATABASE_URL kept as a Secret)
 kapibara app deploy --project demo --name connector \
@@ -180,8 +180,8 @@ kapibara app deploy --project demo --name connector \
 
 Observed results:
 
-- `adminer.apps.jonggrang.dev` → **HTTP 200**, valid **Let's Encrypt** cert
-  (`CN=adminer.apps.jonggrang.dev`), and a real login into Postgres shows the
+- `adminer.apps.example.com` → **HTTP 200**, valid **Let's Encrypt** cert
+  (`CN=adminer.apps.example.com`), and a real login into Postgres shows the
   `public` schema + SQL console.
 - From the `connector` app pod: TCP to `pg:5432` **open**, and a raw
   `PING` to `cache:6379` returns **`+PONG`** — proving app → DB connectivity.

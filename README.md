@@ -14,6 +14,13 @@ Browser e2e: `node web/e2e.mjs` (Playwright).
 
 Lihat [`PLAN.md`](./PLAN.md) untuk arsitektur & milestone.
 
+## Dokumentasi
+
+- [`docs/SETUP.md`](./docs/SETUP.md) — install & jalankan Kapibara, DNS wildcard, TLS.
+- [`docs/DEPLOY-GUIDE.md`](./docs/DEPLOY-GUIDE.md) — import secret, database 1-klik, deploy app (image/Git/compose) + domain, koneksi app↔DB.
+
+Rilis: push tag `vX.Y.Z` → GitHub Actions ([`.github/workflows/release.yml`](./.github/workflows/release.yml)) build binari lintas-platform via GoReleaser.
+
 ## Build & run
 
 ```bash
