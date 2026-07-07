@@ -52,6 +52,9 @@ export function ProjectDetailPage() {
   const [edges, setEdges] = useState<Edge[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [manage, setManage] = useState<ManageKind | null>(null);
+  // Preselected build type when opening the Applications panel (e.g. "New ▸ From
+  // Git repo" opens it defaulted to a Dockerfile git build).
+  const [appInitialBuild, setAppInitialBuild] = useState("image");
   const [openDeployId, setOpenDeployId] = useState<string | null>(null);
 
   useEffect(() => {
@@ -122,7 +125,8 @@ export function ProjectDetailPage() {
             <Button size="sm"><Plus className="size-4" /> New <ChevronDown className="size-3.5" /></Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
-            <DropdownMenuItem onClick={() => setManage("applications")}><Boxes className="size-4" /> Application</DropdownMenuItem>
+            <DropdownMenuItem onClick={() => { setAppInitialBuild("dockerfile"); setManage("applications"); }}><GitBranch className="size-4" /> From Git repo</DropdownMenuItem>
+            <DropdownMenuItem onClick={() => { setAppInitialBuild("image"); setManage("applications"); }}><Boxes className="size-4" /> Application (image)</DropdownMenuItem>
             <DropdownMenuItem onClick={() => setManage("databases")}><DatabaseIcon className="size-4" /> Database</DropdownMenuItem>
             <DropdownMenuItem onClick={() => setManage("compose")}><FileCode2 className="size-4" /> Compose</DropdownMenuItem>
             <DropdownMenuItem onClick={() => setManage("templates")}><Layers className="size-4" /> From template</DropdownMenuItem>
@@ -192,7 +196,9 @@ export function ProjectDetailPage() {
             <DialogHeader>
               <DialogTitle>{MANAGE[manage].title}</DialogTitle>
             </DialogHeader>
-            {MANAGE[manage].render(id)}
+            {manage === "applications"
+              ? <Applications projectId={id} initialBuild={appInitialBuild} />
+              : MANAGE[manage].render(id)}
           </DialogContent>
         </Dialog>
       )}
@@ -482,11 +488,11 @@ function Overview({ projectId }: { projectId: string }) {
   );
 }
 
-function Applications({ projectId }: { projectId: string }) {
+function Applications({ projectId, initialBuild = "image" }: { projectId: string; initialBuild?: string }) {
   const [apps, setApps] = useState<any[]>([]);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState("");
-  const [form, setForm] = useState<any>({ name: "", buildType: "image", image: "", repoUrl: "", branch: "main", gitProviderId: "", port: 80, domain: "", tls: false, autoscaleMin: "", autoscaleMax: "", autoscaleCpu: "", autoscaleMemory: "", rollout: "" });
+  const [form, setForm] = useState<any>({ name: "", buildType: initialBuild, image: "", repoUrl: "", branch: "main", gitProviderId: "", port: 80, domain: "", tls: false, autoscaleMin: "", autoscaleMax: "", autoscaleCpu: "", autoscaleMemory: "", rollout: "" });
   // Git provider connect + repo picker (M3). Providers are org-scoped, so we
   // resolve the project's org first, then offer its connected providers; picking
   // a repo fills repoUrl/branch and links the provider so its token is injected
@@ -555,7 +561,13 @@ function Applications({ projectId }: { projectId: string }) {
   }
   async function deploy(a: any) {
     setBusy(a.id);
-    try { await api.post(`/apps/${a.id}/deploy`); toast.success("Deploy started for " + a.name); }
+    try {
+      const dep = await api.post(`/apps/${a.id}/deploy`);
+      toast.success("Deploy started for " + a.name);
+      // Open the build-log drawer so git builds (clone → build → push) can be
+      // followed live; prebuilt-image deploys finish near-instantly.
+      if (dep?.id) setOpenDeployId(dep.id);
+    }
     catch (e) { toast.error((e as Error).message); }
     finally { setBusy(""); }
   }
