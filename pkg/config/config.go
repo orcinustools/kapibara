@@ -4,6 +4,7 @@ package config
 import (
 	"os"
 	"strconv"
+	"strings"
 )
 
 // Config holds all runtime configuration for the kapibara control-plane.
@@ -36,6 +37,17 @@ type Config struct {
 	// ClusterContainer is the docker container name of the single-node k3s
 	// node; when set (and not pushing) images are imported into its containerd.
 	ClusterContainer string
+
+	// PublicURL is the externally reachable base URL of this kapibara server,
+	// used to build OAuth redirect URIs (e.g. https://paas.example.com). Falls
+	// back to the request host when empty.
+	PublicURL string
+	// Git provider OAuth app credentials (optional; enables the OAuth connect
+	// flow — PAT connect works without them).
+	GitHubClientID     string
+	GitHubClientSecret string
+	GitLabClientID     string
+	GitLabClientSecret string
 }
 
 // Load reads configuration from environment variables, applying sensible
@@ -55,6 +67,12 @@ func Load() Config {
 		RegistryPrefix:   os.Getenv("KAPIBARA_REGISTRY"),
 		BuildPush:        os.Getenv("KAPIBARA_BUILD_PUSH") == "1" || os.Getenv("KAPIBARA_BUILD_PUSH") == "true",
 		ClusterContainer: env("KAPIBARA_CLUSTER_CONTAINER", "orcinus"),
+
+		PublicURL:          strings.TrimRight(os.Getenv("KAPIBARA_PUBLIC_URL"), "/"),
+		GitHubClientID:     os.Getenv("KAPIBARA_GITHUB_CLIENT_ID"),
+		GitHubClientSecret: os.Getenv("KAPIBARA_GITHUB_CLIENT_SECRET"),
+		GitLabClientID:     os.Getenv("KAPIBARA_GITLAB_CLIENT_ID"),
+		GitLabClientSecret: os.Getenv("KAPIBARA_GITLAB_CLIENT_SECRET"),
 	}
 }
 

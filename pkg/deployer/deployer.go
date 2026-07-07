@@ -133,8 +133,16 @@ func (d *Deployer) run(ctx context.Context, app *store.Application, project *sto
 		defer os.RemoveAll(dir)
 
 		fmt.Fprintf(sink, "cloning %s (%s)\n", app.RepoURL, app.Branch)
+		// Inject the connected git provider's token for private repos. The
+		// token is redacted from clone output by pkg/git.
+		token := ""
+		if app.GitProviderID != "" {
+			if gp, err := d.Store.GitProviderByID(app.GitProviderID); err == nil {
+				token = gp.Token
+			}
+		}
 		sha, out, err := git.Clone(ctx, git.CloneOptions{
-			RepoURL: app.RepoURL, Ref: app.Branch, Dir: dir + "/src",
+			RepoURL: app.RepoURL, Ref: app.Branch, Dir: dir + "/src", Token: token,
 		})
 		sink.Write([]byte(out))
 		if err != nil {

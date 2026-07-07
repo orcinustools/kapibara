@@ -26,8 +26,10 @@ type Server struct {
 	Orcinus  *orcinus.Client
 	Auth     *auth.Manager
 	Deployer *deployer.Deployer
-	Kube     *kube.Client
-	router   chi.Router
+	Kube        *kube.Client
+	metrics     *metricsHistory
+	oauthStates *oauthStateStore
+	router      chi.Router
 }
 
 // New builds a Server and wires up routes.
@@ -44,7 +46,9 @@ func New(cfg config.Config, st *store.Store) *Server {
 		Store:   st,
 		Orcinus: oc,
 		Auth:    auth.NewManager(cfg.JWTSecret),
-		Kube:    kc,
+		Kube:        kc,
+		metrics:     newMetricsHistory(120),
+		oauthStates: newOAuthStateStore(),
 		Deployer: deployer.New(st, oc, deployer.Config{
 			RegistryPrefix:   cfg.RegistryPrefix,
 			Push:             cfg.BuildPush,
@@ -81,6 +85,10 @@ func (s *Server) routes() {
 		// Public webhook endpoint (authorized by the path secret).
 		r.Post("/webhooks/{secret}", s.handleWebhook)
 
+		// Public OAuth callback (the provider redirects the browser here; the
+		// signed state links it back to the org/user that started the flow).
+		r.Get("/git-providers/oauth/{type}/callback", s.handleGitOAuthCallback)
+
 		// Authenticated endpoints.
 		r.Group(func(r chi.Router) {
 			r.Use(s.requireAuth)
@@ -99,6 +107,21 @@ func (s *Server) routes() {
 			// Organizations.
 			r.Get("/orgs", s.handleListOrgs)
 			r.Post("/orgs", s.handleCreateOrg)
+
+			// Org members / RBAC (M1). Any member can list; owners/admins
+			// manage. Add is by existing-user email (no invite flow).
+			r.Get("/orgs/{orgID}/members", s.handleListMembers)
+			r.Post("/orgs/{orgID}/members", s.handleAddMember)
+			r.Put("/orgs/{orgID}/members/{userID}", s.handleUpdateMember)
+			r.Delete("/orgs/{orgID}/members/{userID}", s.handleRemoveMember)
+
+			// Git providers (M3): connect a source-control account (PAT or
+			// OAuth), list its repositories for the repo picker.
+			r.Get("/orgs/{orgID}/git-providers", s.handleListGitProviders)
+			r.Post("/orgs/{orgID}/git-providers", s.handleCreateGitProvider)
+			r.Get("/orgs/{orgID}/git-providers/oauth/{type}/start", s.handleGitOAuthStart)
+			r.Delete("/git-providers/{providerID}", s.handleDeleteGitProvider)
+			r.Get("/git-providers/{providerID}/repos", s.handleListGitProviderRepos)
 
 			// Projects (scoped to an org via query/body).
 			r.Get("/orgs/{orgID}/projects", s.handleListProjects)

@@ -106,6 +106,22 @@ func (s *Server) requireOrgAccess(w http.ResponseWriter, r *http.Request, orgID 
 	return m
 }
 
+// requireOrgRole is like requireOrgAccess but additionally requires the caller's
+// role to be one of the allowed roles (e.g. owner/admin for member management).
+func (s *Server) requireOrgRole(w http.ResponseWriter, r *http.Request, orgID string, allowed ...store.Role) *store.Membership {
+	m := s.requireOrgAccess(w, r, orgID)
+	if m == nil {
+		return nil
+	}
+	for _, role := range allowed {
+		if m.Role == role {
+			return m
+		}
+	}
+	writeError(w, http.StatusForbidden, "insufficient role for this action")
+	return nil
+}
+
 func bearerToken(r *http.Request) string {
 	h := r.Header.Get("Authorization")
 	if strings.HasPrefix(h, "Bearer ") {

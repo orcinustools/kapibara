@@ -3,6 +3,7 @@ package api
 import (
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/orcinustools/kapibara/pkg/orcinus"
 )
@@ -65,28 +66,27 @@ func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "cluster access unavailable (no kubeconfig)")
 		return
 	}
-	// Aggregate pod metrics across every unit's isolated orcinus project.
-	units := s.projectUnits(p.ID)
-	podSet := map[string]bool{}
-	for _, u := range units {
-		if pods, err := s.Orcinus.Pods(r.Context(), u.OrcinusProject); err == nil {
-			for _, pd := range pods {
-				podSet[pd.Name] = true
-			}
-		}
-	}
 	all, err := s.Kube.PodMetrics(r.Context(), s.Cfg.Namespace, "")
 	if err != nil {
 		writeError(w, http.StatusServiceUnavailable, "metrics unavailable (install metrics-server): "+err.Error())
 		return
 	}
-	var metrics []any
-	for _, m := range all {
-		if podSet[m.Pod] {
-			metrics = append(metrics, m)
-		}
+	// Aggregate pod metrics across every unit's isolated orcinus project.
+	matched, sample := s.projectPodMetrics(r.Context(), p, all)
+	sample.T = time.Now()
+	// Fold this on-demand read into the rolling history so the series still
+	// advances between background sampler ticks (and even without a sampler).
+	s.metrics.record(p.ID, sample)
+
+	metrics := make([]any, 0, len(matched))
+	for _, m := range matched {
+		metrics = append(metrics, m)
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"metrics": metrics})
+	writeJSON(w, http.StatusOK, map[string]any{
+		"metrics": metrics,
+		"current": sample,
+		"history": s.metrics.get(p.ID),
+	})
 }
 
 func pickPod(pods []orcinus.Pod, service string) string {

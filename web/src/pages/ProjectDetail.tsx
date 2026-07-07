@@ -6,7 +6,7 @@ import {
   Boxes, ChevronDown, Database as DatabaseIcon, Eye, EyeOff, FileCode2, GitBranch, Globe,
   Layers, Loader2, Plus, Rocket, RotateCcw, ScrollText, Scaling, ScrollText as LogIcon, Server, Trash2, X,
 } from "lucide-react";
-import { api, streamText, secretsApi, backupsApi, previewApi, saveAppEnv, saveAppDomain, type SecretSummary, type BackupSummary, type BackupCreate } from "../api";
+import { api, streamText, secretsApi, backupsApi, previewApi, gitApi, saveAppEnv, saveAppDomain, type SecretSummary, type BackupSummary, type BackupCreate, type GitProvider, type GitRepo } from "../api";
 import { Card, Empty, ErrorBox, StatusPill } from "../ui";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -374,17 +374,67 @@ function MetricBar({ valueLabel, ratio, tone, srLabel }: { valueLabel: string; r
   );
 }
 
+// Sparkline renders a dependency-free SVG line of a numeric series, scaled to
+// its own peak. Used for the project's CPU/RAM history (time-series, M6).
+function Sparkline({ values, tone, unitLabel }: { values: number[]; tone: "cpu" | "mem"; unitLabel: string }) {
+  const w = 160, h = 34;
+  if (values.length < 2) {
+    return <div className="text-xs text-muted-foreground">Collecting history…</div>;
+  }
+  const max = Math.max(1, ...values);
+  const stroke = tone === "cpu" ? "var(--primary, #6366f1)" : "var(--success, #10b981)";
+  const step = w / (values.length - 1);
+  const pts = values.map((v, i) => `${(i * step).toFixed(1)},${(h - (v / max) * (h - 4) - 2).toFixed(1)}`).join(" ");
+  const last = values[values.length - 1];
+  return (
+    <div className="flex items-center gap-2">
+      <svg width={w} height={h} viewBox={`0 0 ${w} ${h}`} role="img" aria-label={`${tone} history`} className="shrink-0">
+        <polyline points={pts} fill="none" stroke={stroke} strokeWidth="1.5" strokeLinejoin="round" strokeLinecap="round" />
+      </svg>
+      <span className="text-xs tabular-nums text-muted-foreground w-20 text-right shrink-0">{last}{unitLabel}</span>
+    </div>
+  );
+}
+
 function Overview({ projectId }: { projectId: string }) {
   const [pods, setPods] = useState<any[]>([]);
   const [metrics, setMetrics] = useState<any[]>([]);
+  const [history, setHistory] = useState<any[]>([]);
   useEffect(() => {
-    api.get(`/projects/${projectId}/pods`).then((r) => setPods(r.pods || [])).catch(() => {});
-    api.get(`/projects/${projectId}/metrics`).then((r) => setMetrics(r.metrics || [])).catch(() => {});
+    let stop = false;
+    const tick = () => {
+      api.get(`/projects/${projectId}/pods`).then((r) => { if (!stop) setPods(r.pods || []); }).catch(() => {});
+      api.get(`/projects/${projectId}/metrics`).then((r) => {
+        if (stop) return;
+        setMetrics(r.metrics || []);
+        setHistory(r.history || []);
+      }).catch(() => {});
+    };
+    tick();
+    // Poll so the history series advances live while the tab is open.
+    const iv = setInterval(tick, 5000);
+    return () => { stop = true; clearInterval(iv); };
   }, [projectId]);
   const metricFor = (pod: string) => metrics.find((m) => m.pod === pod);
+  const cpuSeries = history.map((s) => s.cpuMillicores || 0);
+  const memSeries = history.map((s) => Math.round((s.memoryBytes || 0) / 1048576));
   const maxCpu = Math.max(1, ...metrics.map((m) => m.cpuMillicores || 0));
   const maxMem = Math.max(1, ...metrics.map((m) => m.memoryBytes || 0));
   return (
+    <>
+    <Card title="Resource usage (project total)">
+      <div className="grid gap-4 sm:grid-cols-2">
+        <div>
+          <div className="mb-1 text-xs font-medium text-muted-foreground">CPU (millicores)</div>
+          <Sparkline values={cpuSeries} tone="cpu" unitLabel="m" />
+        </div>
+        <div>
+          <div className="mb-1 text-xs font-medium text-muted-foreground">Memory (Mi)</div>
+          <Sparkline values={memSeries} tone="mem" unitLabel="Mi" />
+        </div>
+      </div>
+      <p className="mt-2 text-xs text-muted-foreground">Live sum across the project's pods; history accrues while the server runs.</p>
+    </Card>
     <Card title="Pods">
       {pods.length === 0 ? <Empty text="No running pods." /> : (
         <Table>
@@ -428,6 +478,7 @@ function Overview({ projectId }: { projectId: string }) {
         </Table>
       )}
     </Card>
+    </>
   );
 }
 
@@ -435,7 +486,14 @@ function Applications({ projectId }: { projectId: string }) {
   const [apps, setApps] = useState<any[]>([]);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState("");
-  const [form, setForm] = useState<any>({ name: "", buildType: "image", image: "", repoUrl: "", branch: "main", port: 80, domain: "", tls: false, autoscaleMin: "", autoscaleMax: "", autoscaleCpu: "", autoscaleMemory: "", rollout: "" });
+  const [form, setForm] = useState<any>({ name: "", buildType: "image", image: "", repoUrl: "", branch: "main", gitProviderId: "", port: 80, domain: "", tls: false, autoscaleMin: "", autoscaleMax: "", autoscaleCpu: "", autoscaleMemory: "", rollout: "" });
+  // Git provider connect + repo picker (M3). Providers are org-scoped, so we
+  // resolve the project's org first, then offer its connected providers; picking
+  // a repo fills repoUrl/branch and links the provider so its token is injected
+  // into the clone.
+  const [providers, setProviders] = useState<GitProvider[]>([]);
+  const [repos, setRepos] = useState<GitRepo[]>([]);
+  const [reposLoading, setReposLoading] = useState(false);
   const [confirmState, setConfirmState] = useState<ConfirmState>(null);
   const [scaleTarget, setScaleTarget] = useState<any | null>(null);
   const [replicas, setReplicas] = useState("2");
@@ -453,6 +511,30 @@ function Applications({ projectId }: { projectId: string }) {
     setApps(r.applications || []);
   }
   useEffect(() => { load(); }, [projectId]);
+  useEffect(() => {
+    // Resolve the org from the project, then load its connected git providers.
+    let stop = false;
+    api.get(`/projects/${projectId}`).then((p) => {
+      if (stop || !p?.organizationId) return;
+      gitApi.list(p.organizationId).then((ps) => { if (!stop) setProviders(ps); }).catch(() => {});
+    }).catch(() => {});
+    return () => { stop = true; };
+  }, [projectId]);
+
+  async function pickProvider(providerId: string) {
+    setForm((f: any) => ({ ...f, gitProviderId: providerId }));
+    setRepos([]);
+    if (!providerId) return;
+    setReposLoading(true);
+    try { setRepos(await gitApi.repos(providerId)); }
+    catch (e) { toast.error((e as Error).message); }
+    finally { setReposLoading(false); }
+  }
+  function pickRepo(cloneUrl: string) {
+    const repo = repos.find((r) => r.cloneUrl === cloneUrl);
+    if (!repo) return;
+    setForm((f: any) => ({ ...f, repoUrl: repo.cloneUrl, branch: repo.defaultBranch || f.branch }));
+  }
 
   async function create() {
     setErr(null);
@@ -638,8 +720,30 @@ function Applications({ projectId }: { projectId: string }) {
               </>
             ) : (
               <>
+                {providers.length > 0 && (
+                  <>
+                    <Label>Git provider (optional)</Label>
+                    <Select value={form.gitProviderId} onChange={(e) => pickProvider(e.target.value)}>
+                      <option value="">— Public repo / manual URL —</option>
+                      {providers.map((p) => (
+                        <option key={p.id} value={p.id}>{p.name} ({p.type}: {p.accountLogin})</option>
+                      ))}
+                    </Select>
+                    {form.gitProviderId && (
+                      <>
+                        <Label>Repository</Label>
+                        <Select value={form.repoUrl} onChange={(e) => pickRepo(e.target.value)} disabled={reposLoading}>
+                          <option value="">{reposLoading ? "Loading repositories…" : "— Select a repository —"}</option>
+                          {repos.map((r) => (
+                            <option key={r.cloneUrl} value={r.cloneUrl}>{r.fullName}{r.private ? " (private)" : ""}</option>
+                          ))}
+                        </Select>
+                      </>
+                    )}
+                  </>
+                )}
                 <Label>Repo URL</Label>
-                <Input value={form.repoUrl} onChange={(e) => setForm({ ...form, repoUrl: e.target.value })} placeholder="https://github.com/user/repo" />
+                <Input value={form.repoUrl} onChange={(e) => setForm({ ...form, repoUrl: e.target.value, gitProviderId: form.gitProviderId })} placeholder="https://github.com/user/repo" />
                 <Label>Branch</Label>
                 <Input value={form.branch} onChange={(e) => setForm({ ...form, branch: e.target.value })} />
               </>
@@ -1660,9 +1764,9 @@ function ClusterSecrets() {
 // /apps/{id} {domain, tls}. Backend caveats worth knowing:
 //   • One domain per app (no multi-domain / no separate Domain entity), so this
 //     surface lists each app's single host — "add" sets it, "edit" changes it.
-//   • orDefault on the backend keeps the old domain when an empty string is
-//     sent, so "Remove" reliably disables TLS but the host itself may persist
-//     server-side until a real value replaces it (tracked as a backend gap).
+//   • The backend models `domain` as nullable: sending an empty string
+//     explicitly clears the host, so "Remove" both disables TLS AND detaches
+//     the domain (removed from the ingress on the next deploy).
 //   • No cert-status field/endpoint exists; certificate state below is DERIVED
 //     from domain+tls (cert-manager/ACME does the actual issuance out-of-band).
 
