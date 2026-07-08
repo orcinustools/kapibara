@@ -12,8 +12,6 @@ sebagai cluster engine. Kapibara = control-plane (API + UI); Orcinus menjalankan
 Build UI + binary: `make build` (butuh Node+npm untuk UI). Dev UI: `cd web && npm run dev` (proxy ke API :9000).
 Browser e2e: `node web/e2e.mjs` (Playwright).
 
-Lihat [`PLAN.md`](./PLAN.md) untuk arsitektur & milestone.
-
 ## Dokumentasi
 
 - [`docs/SETUP.md`](./docs/SETUP.md) — install & jalankan Kapibara, DNS wildcard, TLS.
