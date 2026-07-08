@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"
@@ -26,11 +27,14 @@ type Client struct {
 	restCfg   *rest.Config
 }
 
-// New builds a cluster client from a kubeconfig path.
+// New builds a cluster client. It prefers an explicit kubeconfig at
+// kubeconfigPath; if that file is absent it falls back to the in-cluster
+// service-account config (so Kapibara can run as a pod on the cluster it
+// manages). Returns an error only when neither source is usable.
 func New(kubeconfigPath string) (*Client, error) {
-	cfg, err := clientcmd.BuildConfigFromFlags("", kubeconfigPath)
+	cfg, err := loadRESTConfig(kubeconfigPath)
 	if err != nil {
-		return nil, fmt.Errorf("load kubeconfig %q: %w", kubeconfigPath, err)
+		return nil, err
 	}
 	cs, err := kubernetes.NewForConfig(cfg)
 	if err != nil {
@@ -39,6 +43,25 @@ func New(kubeconfigPath string) (*Client, error) {
 	// Metrics are optional (require metrics-server); ignore construction errors.
 	mc, _ := metricsv.NewForConfig(cfg)
 	return &Client{Clientset: cs, Metrics: mc, restCfg: cfg}, nil
+}
+
+// loadRESTConfig resolves a *rest.Config from, in order: an existing kubeconfig
+// file, or the in-cluster service account.
+func loadRESTConfig(kubeconfigPath string) (*rest.Config, error) {
+	if kubeconfigPath != "" {
+		if _, statErr := os.Stat(kubeconfigPath); statErr == nil {
+			cfg, err := clientcmd.BuildConfigFromFlags("", kubeconfigPath)
+			if err != nil {
+				return nil, fmt.Errorf("load kubeconfig %q: %w", kubeconfigPath, err)
+			}
+			return cfg, nil
+		}
+	}
+	// No kubeconfig file: try the in-cluster config (running as a pod).
+	if cfg, err := rest.InClusterConfig(); err == nil {
+		return cfg, nil
+	}
+	return nil, fmt.Errorf("no kubeconfig at %q and not running in-cluster", kubeconfigPath)
 }
 
 // Exec runs a command in a pod container and streams stdout/stderr to the

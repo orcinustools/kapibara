@@ -1,0 +1,48 @@
+# Deploy the Kapibara control-plane onto the orcinus cluster, exposed at a
+# domain with automatic TLS.
+#
+#   orcinus deploy -f deploy/kapibara.compose.yml --project kapibara --wait
+#
+# Before deploying:
+#   1. Build & push the image (see deploy/README.md) and set `image:` below.
+#   2. Replace kapibara.example.com with your host (wildcard/A record → cluster).
+#   3. Fill KAPIBARA_ORCINUS_URL / _TOKEN, and set strong JWT + ACME email.
+#   4. Apply deploy/rbac.yaml so the pod may read pod logs + metrics.
+services:
+  kapibara:
+    image: ghcr.io/orcinustools/kapibara:latest
+    ports:
+      - "9000"
+    # Expose via the cluster ingress at a domain, with a Let's Encrypt cert.
+    x-orcinus-expose: ingress
+    x-orcinus-host: kapibara.example.com
+    x-orcinus-tls: letsencrypt
+    x-orcinus-path: /
+    x-orcinus-port: 9000
+    environment:
+      KAPIBARA_ADDR: ":9000"
+      # orcinus engine API, reachable from inside the cluster. Adjust to your
+      # setup (in-cluster Service, or the node/host IP where orcinus listens).
+      KAPIBARA_ORCINUS_URL: "http://orcinus-api:8899"
+      KAPIBARA_ORCINUS_TOKEN: "replace-with-orcinus-token"
+      # TLS issuance for app domains you deploy later.
+      KAPIBARA_ACME_EMAIL: "you@example.com"
+      # Signs sessions/API tokens — generate with `openssl rand -hex 32`.
+      KAPIBARA_JWT_SECRET: "replace-with-a-long-random-secret"
+      # Persist the SQLite store + build cache on the mounted volume.
+      KAPIBARA_DATA_DIR: "/data"
+      KAPIBARA_DATABASE_URL: "/data/kapibara.db"
+      KAPIBARA_NAMESPACE: "default"
+      # No kubeconfig is set: Kapibara uses the pod's in-cluster service account
+      # (the namespace "default" SA) for logs/metrics. deploy/rbac.yaml grants
+      # that SA the required read access.
+    # Mark the sensitive env keys so orcinus stores them as a Kubernetes Secret.
+    x-orcinus-secret:
+      - KAPIBARA_ORCINUS_TOKEN
+      - KAPIBARA_JWT_SECRET
+    volumes:
+      - kapibara-data:/data
+    x-orcinus-volume-size: 2Gi
+
+volumes:
+  kapibara-data:
