@@ -12,17 +12,17 @@ kind: ClusterRole
 metadata:
   name: kapibara-cluster-access
 rules:
-  # Read pods and stream their logs (Logs tab).
+  # Read pods (+ logs), nodes, and namespaces (Logs tab, Cluster page).
   - apiGroups: [""]
-    resources: ["pods", "pods/log"]
+    resources: ["pods", "pods/log", "nodes", "namespaces"]
     verbs: ["get", "list", "watch"]
   # Exec into pods (used by some day-2 actions).
   - apiGroups: [""]
     resources: ["pods/exec"]
     verbs: ["create"]
-  # Read pod metrics from metrics-server (Metrics tab / history).
+  # Read pod + node metrics from metrics-server (Metrics tab / history).
   - apiGroups: ["metrics.k8s.io"]
-    resources: ["pods"]
+    resources: ["pods", "nodes"]
     verbs: ["get", "list"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
