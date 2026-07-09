@@ -6,34 +6,28 @@ hints that orcinus converts to Kubernetes objects — then deploy it.
 
 ## How to use
 
-1. Inspect the project (language, how it starts, the port it listens on, whether
-   it needs a database or persistent storage).
-2. Decide the image source:
-   - **Prebuilt / built elsewhere** → reference the image directly.
-   - **Kapibara registry gateway** → build locally and
-     `docker push <kapibara-host>/<scope>/<name>:<tag>`, then reference it as
-     `kapibara/<scope>/<name>:<tag>` (Kapibara rewrites it to the pull address).
-3. Write `orcinus.yml` (see the template).
-4. Deploy:
+1. Inspect the project: language, how it starts, the port it listens on, and
+   whether it needs a database, cache, or persistent storage.
+2. Decide each service's image (see "Images & the registry" below):
+   - **Public image** → reference it directly (`nginx:alpine`, `postgres:16`).
+   - **Your own code** → build it, push to the Kapibara registry, and reference
+     `registry/<project>/<image>:tag`.
+3. Prefer **managed databases** over hand-rolled DB services (see below).
+4. Write `orcinus.yml` (see the template), then deploy:
    ```bash
-   orcinus deploy -f orcinus.yml --project <name> --acme-email you@example.com --wait
+   kapibara deploy --project <name> -f orcinus.yml     # streams the deploy log
    ```
-   Or via Kapibara compose: `kapibara deploy --project <name> -f orcinus.yml`.
+   The deploy is **asynchronous**: Kapibara applies it, then streams pod
+   readiness until ready or timeout. Follow later with
+   `kapibara deployment status <id>`.
 
 ## Default app domain
 
 If the user does not specify a host, derive one from the server's base apps
-domain: **`<app-name>.<appsDomain>`**. Discover `appsDomain` (and the registry
-host) with:
-
-```bash
-kapibara info      # apps domain: apps.example.com  → apps at <app>.apps.example.com
-```
-
-Example: app `api` on a server whose apps domain is `apps.example.com` →
-`x-orcinus-host: api.apps.example.com` (or `--domain api.apps.example.com`). Only
-expose (ingress + host + TLS) services meant to be public; leave internal
-services without a host.
+domain: **`<app-name>.<appsDomain>`**. Discover it with `kapibara info`
+(`apps domain: apps.example.com` → `<app>.apps.example.com`). Only expose
+(ingress + host + TLS) services meant to be public; leave internal services
+without a host.
 
 ## Rules that matter
 
@@ -43,13 +37,15 @@ services without a host.
 - **A service must declare `ports:` to get a Service** — without it there is no
   in-cluster DNS name, so databases/backends become unreachable. Always list the
   port a peer connects to.
-- Services reach each other by **service name** (e.g. `db:5432`, `cache:6379`).
+- Services reach each other by **service name** (e.g. `db:5432`, `redis:6379`).
 - Expose to the internet with `x-orcinus-expose: ingress` + `x-orcinus-host` +
   `x-orcinus-tls: letsencrypt`. The host must resolve to the cluster and
-  ports 80/443 must be reachable for the ACME HTTP-01 challenge.
+  ports 80/443 must be reachable for the ACME HTTP-01 challenge. Two public
+  services (e.g. frontend + API) each get their own host.
 - Put sensitive env keys in `x-orcinus-secret` so they render as a Kubernetes
-  Secret instead of plain env.
-- Named volumes become a PVC sized by `x-orcinus-volume-size`; databases should
+  Secret instead of plain env. Never hard-code long-lived credentials you intend
+  to keep — mark them secret and rotate anything that leaked into a manifest.
+- Named volumes become a PVC sized by `x-orcinus-volume-size`; stateful services
   use `x-orcinus-controller: statefulset`.
 
 ## `x-orcinus-*` hints (per service)
@@ -70,79 +66,114 @@ services without a host.
 | `x-orcinus-image-pull-secret` | Pull secret name for private images |
 | `x-orcinus-ingress-class` | Ingress class (default cluster ingress) |
 
-## Template (web app + Postgres + Redis)
+## Images & the registry (build → push → reference)
+
+Kapibara often runs **in-cluster**, where it **cannot build from Git** (a pod has
+no Docker). Build your image where Docker is available (your machine or CI) and
+push it to Kapibara's built-in registry gateway, then reference the short form:
+
+```bash
+# Build (monorepos: context is the repo ROOT, pick the service Dockerfile)
+docker build -t <kapibara-host>/registry/<project>/<image>:<tag> -f path/to/Dockerfile .
+
+# Log in with your Kapibara account, then push (the gateway namespaces it by org)
+docker login <kapibara-host> -u you@example.com
+docker push <kapibara-host>/registry/<project>/<image>:<tag>
+```
+
+In `orcinus.yml`, reference it **without the host**:
+
+```yaml
+    image: registry/<project>/<image>:<tag>
+```
+
+Kapibara rewrites that at deploy time to the full, org-scoped pull path
+(`<kapibara-host>/registry/<org>/<project>/<image>:<tag>`) and the cluster pulls
+it back through the gateway — no pull secret needed. Get `<kapibara-host>` from
+`kapibara info` (registry host).
+
+## Reuse existing managed databases
+
+If the project already has managed databases (created with `kapibara db create`),
+**do not declare DB services in the compose** — reference them by their service
+name and use the connection string from `kapibara db info <id>`:
+
+```yaml
+    environment:
+      DATABASE_URL: postgresql://<user>:<pass>@db:5432/app   # managed db named "db"
+      REDIS_URL: redis://redis:6379                          # managed db named "redis"
+    x-orcinus-secret: [DATABASE_URL]
+```
+
+Create them first if needed:
+
+```bash
+kapibara db create --project <p> --name db    --engine postgres --deploy
+kapibara db create --project <p> --name redis --engine redis    --deploy
+kapibara db info <id>   # copy the connection string
+```
+
+A backend that runs migrations on startup (e.g. Prisma) needs the DB reachable
+at deploy time — deploy the databases before (or in the same project as) the app.
+
+## Template — frontend + API + managed datastores
 
 ```yaml
 services:
-  web:
-    image: kapibara/acme/web:1        # or a public image, e.g. nginx:alpine
-    ports: ["8080"]
+  api:
+    image: registry/shop/api:1        # built & pushed to the Kapibara registry
+    ports: ["3000"]
     x-orcinus-expose: ingress
-    x-orcinus-host: web.apps.example.com
+    x-orcinus-host: api.apps.example.com
     x-orcinus-tls: letsencrypt
     environment:
-      PORT: "8080"
-      DATABASE_URL: postgres://app:secret@db:5432/app
-      REDIS_URL: redis://cache:6379
+      NODE_ENV: production
+      PORT: "3000"
+      DATABASE_URL: postgresql://app:secret@db:5432/app  # managed db "db"
+      REDIS_URL: redis://redis:6379                      # managed db "redis"
     x-orcinus-secret: [DATABASE_URL]
     deploy:
-      replicas: 2
       resources:
         limits: { cpus: "0.5", memory: 512M }
 
-  db:
-    image: postgres:16
-    ports: ["5432"]                    # required so peers can reach db:5432
-    x-orcinus-controller: statefulset
-    x-orcinus-volume-size: 5Gi
+  web:
+    image: registry/shop/web:1
+    ports: ["3000"]
+    x-orcinus-expose: ingress
+    x-orcinus-host: shop.apps.example.com
+    x-orcinus-tls: letsencrypt
     environment:
-      POSTGRES_USER: app
-      POSTGRES_PASSWORD: secret
-      POSTGRES_DB: app
-    x-orcinus-secret: [POSTGRES_PASSWORD]
-    volumes: ["db-data:/var/lib/postgresql/data"]
-
-  cache:
-    image: redis:7
-    ports: ["6379"]
-    x-orcinus-controller: statefulset
-
-volumes:
-  db-data:
+      ORIGIN: https://shop.apps.example.com
 ```
 
-## One-click databases (CLI)
+(`db` and `redis` are managed databases created with `kapibara db`, not compose
+services — that is why they are not declared here.)
 
-For stateful dependencies, prefer Kapibara's managed databases over hand-writing
-a DB service — they set up the StatefulSet + PVC + Service correctly:
+## Deploy & troubleshoot
 
 ```bash
-kapibara db create --project <p> --name pg    --engine postgres --deploy
-kapibara db create --project <p> --name cache --engine redis    --deploy
-kapibara db list --project <p>     # id · name · engine · host:port
-kapibara db info <dbID>            # connection string + credentials
+kapibara deploy --project shop -f orcinus.yml        # async; streams pod status
+kapibara deployment status <id>                      # re-follow a deploy's log
 ```
 
-Engines: `postgres | mysql | mariadb | mongo | redis`. Optional create flags:
-`--version --username --password --dbname --volume-size` (sensible defaults).
+Watch the streamed log for pod status:
 
-Wire the app to them via env — the **host is the database name** (`pg`, `cache`):
-
-```bash
-kapibara app deploy --project <p> --name api --build image --image <img> \
-  --port 8080 --domain api.apps.example.com --tls \
-  --env DATABASE_URL='postgres://kapibara:<pass>@pg:5432/app' \
-  --env REDIS_URL='redis://cache:6379' \
-  --secret DATABASE_URL
-```
-
-Get the exact `DATABASE_URL` from `kapibara db info <dbID>` (its
-`connection:` line). Use `--secret <KEY>` to store credentials as a Secret.
+- **`ImagePullBackOff` / `ErrImagePull`** → the image isn't pullable. Common
+  causes: you referenced `registry/...` but never pushed it; a typo in the
+  project/image/tag; or a public image name that doesn't exist. Verify with a
+  `docker pull` of the resolved path.
+- **Pod stuck `Pending`** → no schedulable node (resource/disk pressure) or a
+  PVC that can't bind.
+- **`CrashLoopBackOff`** → the app started but exited (bad config, DB
+  unreachable, failed migration). Check logs; confirm `DATABASE_URL`/host.
+- **TLS not `Ready`** → the host must resolve to the cluster and :80 be
+  reachable; check `kubectl get certificate`.
 
 ## Deploy checklist
 
 - [ ] Every reachable service has `ports:`.
-- [ ] Public services have `x-orcinus-expose: ingress` + `x-orcinus-host` (+ `x-orcinus-tls` for HTTPS).
-- [ ] Secrets/credentials are listed in `x-orcinus-secret`.
+- [ ] Own-code images are built and **pushed** to the registry before deploy.
+- [ ] Public services have `x-orcinus-expose: ingress` + `x-orcinus-host` (+ `x-orcinus-tls`).
+- [ ] Credentials are listed in `x-orcinus-secret`; managed DBs referenced by name.
 - [ ] Stateful services use `statefulset` + `x-orcinus-volume-size`.
-- [ ] The DNS host resolves to the cluster; `--acme-email` is passed for TLS.
+- [ ] The DNS host resolves to the cluster.
