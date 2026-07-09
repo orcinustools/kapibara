@@ -21,6 +21,31 @@ hints that orcinus converts to Kubernetes objects — then deploy it.
    readiness until ready or timeout. Follow later with
    `kapibara deployment status <id>`.
 
+## Fastest path: `kapibara up` (local source — no Dockerfile or manifest)
+
+When the server has **in-cluster builds** enabled (a BuildKit daemon; see
+"Images & the registry"), a single app can be shipped straight from a local
+directory — no `orcinus.yml`, no Docker, no Git push. The CLI packs the folder,
+uploads it, and the **server builds and deploys** it, streaming the log:
+
+```bash
+kapibara up --project <p> --name <app> --build railpack \
+  --path . --port <port> --domain <app>.<appsDomain> --tls \
+  --env KEY=VALUE --secret KEY --mount data:/var/lib/app --volume-size 1Gi
+```
+
+- `--build railpack` auto-detects the stack (Node, Go, Python, Ruby, …), no
+  Dockerfile needed; `--build dockerfile` uses the repo's Dockerfile
+  (`--dockerfile <path>`, `--context-dir <subdir>` for monorepos).
+- Packing honors `.dockerignore` (else `.gitignore`) and always excludes `.git`.
+- For a **Git repo** instead of local source, use the same flags with
+  `kapibara app deploy --repo <git-url> --build railpack …`.
+
+Prefer `up`/`app deploy` for a **single service from source**. Author an
+`orcinus.yml` (below) for **multi-service** apps, managed-database wiring, or
+prebuilt/public images. Monorepos with several apps: deploy each app separately
+(`--context-dir apps/<name>`), not the repo root.
+
 ## Default app domain
 
 If the user does not specify a host, derive one from the server's base apps
@@ -69,15 +94,17 @@ without a host.
 ## Images & the registry (build → push → reference)
 
 If the server has **in-cluster builds** enabled (a BuildKit daemon +
-`KAPIBARA_INCLUSTER_BUILD=1`), Kapibara builds from Git itself — no Docker
-anywhere: `kapibara deploy --build railpack|dockerfile --repo <git-url>` clones,
-builds server-side, pushes to the registry, and deploys. Otherwise (default),
-Kapibara runs **in-cluster** and **cannot build from Git**: build the image
-where you are and push it to Kapibara's registry gateway with one CLI command
-(it handles the registry login), then reference the short
-`registry/<project>/<image>:<tag>` form in the manifest.
+`KAPIBARA_INCLUSTER_BUILD=1`), Kapibara builds from source itself — no Docker
+anywhere — via either `kapibara up` (local source, see above) or
+`kapibara app deploy --build railpack|dockerfile --repo <git-url>` (Git). It
+clones/unpacks, builds server-side, pushes to the registry, and deploys.
 
-Two build modes:
+Otherwise (default), Kapibara runs **in-cluster** and **cannot build from
+source**: build the image where you are and push it to Kapibara's registry
+gateway with one CLI command (it handles the registry login), then reference the
+short `registry/<project>/<image>:<tag>` form in the manifest.
+
+Two client-side build modes (for the no-in-cluster-build case):
 
 - **`kapibara image build`** — full Dockerfile, runs `RUN` steps. Needs Docker
   on this machine. Monorepos: context is the repo root, `-f` picks the service
