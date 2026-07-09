@@ -41,21 +41,28 @@ Kapibara and orcinus can run on the same host (recommended) or separately.
 
 ## 3. Install
 
-### Option A — download a release binary (recommended)
+### Option A — install script (recommended)
 
-Each tagged release publishes prebuilt binaries. Pick your OS/arch:
+Downloads the latest release binary for your OS/arch (linux/darwin, amd64/arm64),
+verifies its checksum, and installs to `/usr/local/bin`:
 
 ```bash
-VERSION=v0.1.0
-OS=linux ARCH=amd64   # or darwin / arm64
-curl -sSL -o kapibara.tar.gz \
-  "https://github.com/orcinustools/kapibara/releases/download/${VERSION}/kapibara_${VERSION#v}_${OS}_${ARCH}.tar.gz"
-tar xzf kapibara.tar.gz
-sudo install kapibara /usr/local/bin/kapibara
-kapibara version
+curl -fsSL https://raw.githubusercontent.com/orcinustools/kapibara/main/install.sh | sh
 ```
 
-### Option B — build from source
+Overrides: `KAPIBARA_VERSION=v0.1.0` (pin a tag), `KAPIBARA_INSTALL=$HOME/.local/bin`
+(install dir). Then: `kapibara version`.
+
+### Option B — `go install`
+
+```bash
+go install github.com/orcinustools/kapibara/cmd/kapibara@latest
+```
+
+The web UI is embedded (committed under `pkg/webui/dist`), so no Node toolchain
+is needed for this path.
+
+### Option C — build from source
 
 ```bash
 git clone https://github.com/orcinustools/kapibara.git

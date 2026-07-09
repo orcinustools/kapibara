@@ -22,6 +22,16 @@ Rilis: push tag `vX.Y.Z` → GitHub Actions ([`.github/workflows/release.yml`](.
 
 Skill untuk AI agent (cara menulis `orcinus.yml`): `kapibara skill` (cetak), `kapibara skill --example` (starter `orcinus.yml`), `kapibara skill --write .claude/skills/orcinus-deploy/SKILL.md` (install). Sumber ter-embed di [`cmd/kapibara/skill.md`](./cmd/kapibara/skill.md).
 
+## Install
+
+```bash
+# Release binary (linux/darwin, amd64/arm64) — checksum-verified:
+curl -fsSL https://raw.githubusercontent.com/orcinustools/kapibara/main/install.sh | sh
+
+# Or via Go (UI is embedded, no Node needed):
+go install github.com/orcinustools/kapibara/cmd/kapibara@latest
+```
+
 ## Build & run
 
 ```bash
