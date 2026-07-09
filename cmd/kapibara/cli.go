@@ -469,7 +469,7 @@ func appCmd() *cobra.Command {
 	}
 	deploy.Flags().StringVar(&project, "project", "", "project name or id")
 	deploy.Flags().StringVar(&name, "name", "", "application name")
-	deploy.Flags().StringVar(&buildType, "build", "image", "build type: dockerfile | nixpacks | image")
+	deploy.Flags().StringVar(&buildType, "build", "image", "build type: dockerfile | nixpacks | railpack | image")
 	deploy.Flags().StringVar(&repo, "repo", "", "git repo URL (dockerfile/nixpacks builds)")
 	deploy.Flags().StringVar(&branch, "branch", "", "git branch")
 	deploy.Flags().StringVar(&contextDir, "context-dir", "", "build context subdirectory within the repo (monorepos)")

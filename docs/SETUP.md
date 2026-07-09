@@ -201,7 +201,7 @@ You're ready to deploy. See the **[Deploy Guide](./DEPLOY-GUIDE.md)** for:
 
 - importing secrets (`kapibara secret put …`),
 - one-click databases (Postgres, Redis, …),
-- deploying apps from a prebuilt image, a **Git repo** (Dockerfile/Nixpacks), or
+- deploying apps from a prebuilt image, a **Git repo** (Dockerfile/Nixpacks/Railpack), or
   a local Docker Compose file,
 - exposing an app at `https://<app>.apps.example.com` with automatic TLS,
 - wiring app → database connectivity.

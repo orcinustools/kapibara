@@ -11,7 +11,7 @@ import (
 
 type appReq struct {
 	Name           string            `json:"name"`
-	BuildType      string            `json:"buildType"` // dockerfile | nixpacks | image
+	BuildType      string            `json:"buildType"` // dockerfile | nixpacks | railpack | image
 	RepoURL        string            `json:"repoUrl"`
 	Branch         string            `json:"branch"`
 	GitProviderID  string            `json:"gitProviderId"`
@@ -72,7 +72,7 @@ func (s *Server) handleCreateApp(w http.ResponseWriter, r *http.Request) {
 		req.BuildType = "dockerfile"
 	}
 	switch req.BuildType {
-	case "dockerfile", "nixpacks":
+	case "dockerfile", "nixpacks", "railpack":
 		if req.RepoURL == "" {
 			writeError(w, http.StatusBadRequest, "repoUrl required for git builds")
 			return

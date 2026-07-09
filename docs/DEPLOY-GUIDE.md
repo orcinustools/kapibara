@@ -114,8 +114,12 @@ kapibara app deploy --project demo --name adminer \
 - `--domain` + `--tls` render `x-orcinus-expose: ingress`, `x-orcinus-host`, and
   `x-orcinus-tls: letsencrypt`; cert-manager then issues a Let's Encrypt
   certificate for the host over HTTP-01.
-- Build types: `image` (prebuilt), `dockerfile` / `nixpacks` (`--repo` git URL,
-  built on the server), and the deploy streams logs with `--follow`.
+- Build types: `image` (prebuilt), `dockerfile` / `nixpacks` / `railpack`
+  (`--repo` git URL, built where the builder runs), and the deploy streams logs
+  with `--follow`. `nixpacks`/`railpack` auto-detect the stack (no Dockerfile);
+  `railpack` needs a reachable BuildKit (`BUILDKIT_HOST`). Add `--context-dir`
+  for a monorepo subfolder, `--env KEY=VALUE` for build/runtime env, and
+  `--mount name:path` + `--volume-size` for persistent volumes.
 
 Verify: `https://adminer.apps.example.com` serves 200 with a valid LE cert.
 

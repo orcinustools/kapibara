@@ -21,6 +21,9 @@ const (
 	Dockerfile Type = "dockerfile"
 	// Nixpacks builds using nixpacks (auto-detects the language).
 	Nixpacks Type = "nixpacks"
+	// Railpack builds using Railway's railpack (auto-detects the language;
+	// nixpacks' successor). Requires a reachable BuildKit (BUILDKIT_HOST).
+	Railpack Type = "railpack"
 	// Image skips building and uses a prebuilt image reference.
 	Image Type = "image"
 )
@@ -59,6 +62,10 @@ func (b *Builder) Build(ctx context.Context, req Request) error {
 		if err := b.nixpacksBuild(ctx, req, log); err != nil {
 			return err
 		}
+	case Railpack:
+		if err := b.railpackBuild(ctx, req, log); err != nil {
+			return err
+		}
 	case Image:
 		// Nothing to build; the image is expected to be pullable already.
 		return nil
@@ -86,6 +93,23 @@ func (b *Builder) nixpacksBuild(ctx context.Context, req Request, log io.Writer)
 		return fmt.Errorf("nixpacks not installed; use build type %q or install nixpacks", Dockerfile)
 	}
 	return run(ctx, log, "nixpacks", "build", req.ContextDir, "--name", req.ImageRef)
+}
+
+// railpackBuild builds with Railway's railpack (auto-detects the stack, no
+// Dockerfile). railpack drives BuildKit, so BUILDKIT_HOST must point at a
+// reachable buildkitd (e.g. `docker run --privileged -d --name buildkit
+// moby/buildkit` + BUILDKIT_HOST=docker-container://buildkit). It loads the
+// result into the local Docker image store, so publish() can push/import it.
+func (b *Builder) railpackBuild(ctx context.Context, req Request, log io.Writer) error {
+	if _, err := exec.LookPath("railpack"); err != nil {
+		return fmt.Errorf("railpack not installed; install it (https://github.com/railwayapp/railpack) or use build type %q", Dockerfile)
+	}
+	if os.Getenv("BUILDKIT_HOST") == "" {
+		return fmt.Errorf("railpack needs a BuildKit: start one and set BUILDKIT_HOST " +
+			"(e.g. `docker run --rm --privileged -d --name buildkit moby/buildkit` then " +
+			"BUILDKIT_HOST=docker-container://buildkit)")
+	}
+	return run(ctx, log, "railpack", "build", req.ContextDir, "--name", req.ImageRef)
 }
 
 // publish makes the built image available to the cluster.

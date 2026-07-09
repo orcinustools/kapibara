@@ -67,7 +67,7 @@ Buka `http://localhost:9000`, register user pertama (jadi admin).
 
 - **Auth & multi-tenant:** user, organization, project, membership, RBAC, API token (`kap_…`).
 - **Deploy Docker Compose** langsung ke cluster (native orcinus).
-- **Applications dari Git:** builder Dockerfile / Nixpacks / prebuilt image → deploy. Tanpa registry, image di-import ke containerd k3s.
+- **Applications dari Git:** builder Dockerfile / Nixpacks / Railpack / prebuilt image → deploy, dengan opsi `--context-dir` (monorepo), `--env`, dan volume persisten (`--mount` + `--volume-size`). Tanpa registry, image di-import ke containerd k3s.
 - **Domains + TLS:** `x-orcinus-expose/host/tls` + cert-manager (ACME).
 - **Env & Secrets:** secret di-extract ke `secretKeyRef` (via `x-orcinus-secret`).
 - **Database 1-klik:** Postgres/MySQL/MariaDB/MongoDB/Redis (StatefulSet + PVC + secret) + connection string.
