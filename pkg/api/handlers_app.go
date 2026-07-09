@@ -14,13 +14,16 @@ type appReq struct {
 	BuildType      string            `json:"buildType"` // dockerfile | nixpacks | image
 	RepoURL        string            `json:"repoUrl"`
 	Branch         string            `json:"branch"`
+	GitProviderID  string            `json:"gitProviderId"`
 	ContextDir     string            `json:"contextDir"`
 	DockerfilePath string            `json:"dockerfilePath"`
 	Image          string            `json:"image"`
 	Port           int               `json:"port"`
 	Replicas       int               `json:"replicas"`
-	Domain         string            `json:"domain"`
-	TLS            bool              `json:"tls"`
+	// Domain is a pointer so an update can distinguish "not provided" (nil,
+	// leave unchanged) from "explicitly cleared" (non-nil empty string).
+	Domain     *string `json:"domain"`
+	TLS        bool    `json:"tls"`
 	Env            map[string]string `json:"env"`
 	SecretKeys     []string          `json:"secretKeys"`
 
@@ -91,12 +94,13 @@ func (s *Server) handleCreateApp(w http.ResponseWriter, r *http.Request) {
 		BuildType:      req.BuildType,
 		RepoURL:        req.RepoURL,
 		Branch:         req.Branch,
+		GitProviderID:  req.GitProviderID,
 		ContextDir:     req.ContextDir,
 		DockerfilePath: req.DockerfilePath,
 		Image:          req.Image,
 		Port:           req.Port,
 		Replicas:       req.Replicas,
-		Domain:         req.Domain,
+		Domain:         derefStr(req.Domain),
 		TLS:            req.TLS,
 		Env:            marshalEnv(req.Env),
 		SecretKeys:     marshalList(req.SecretKeys),
@@ -165,6 +169,7 @@ func (s *Server) handleUpdateApp(w http.ResponseWriter, r *http.Request) {
 	}
 	app.RepoURL = orDefault(req.RepoURL, app.RepoURL)
 	app.Branch = orDefault(req.Branch, app.Branch)
+	app.GitProviderID = orDefault(req.GitProviderID, app.GitProviderID)
 	app.ContextDir = orDefault(req.ContextDir, app.ContextDir)
 	app.DockerfilePath = orDefault(req.DockerfilePath, app.DockerfilePath)
 	app.Image = orDefault(req.Image, app.Image)
@@ -174,7 +179,11 @@ func (s *Server) handleUpdateApp(w http.ResponseWriter, r *http.Request) {
 	if req.Replicas != 0 {
 		app.Replicas = req.Replicas
 	}
-	app.Domain = orDefault(req.Domain, app.Domain)
+	// A nil Domain means "leave unchanged"; a non-nil (possibly empty) Domain
+	// is an explicit set, so "" clears the ingress host (bug-001).
+	if req.Domain != nil {
+		app.Domain = *req.Domain
+	}
 	app.TLS = req.TLS
 	if req.Env != nil {
 		app.Env = marshalEnv(req.Env)
@@ -313,4 +322,12 @@ func orDefault(v, def string) string {
 		return v
 	}
 	return def
+}
+
+// derefStr returns the pointed-to string, or "" if nil.
+func derefStr(p *string) string {
+	if p == nil {
+		return ""
+	}
+	return *p
 }

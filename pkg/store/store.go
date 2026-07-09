@@ -29,6 +29,7 @@ func AllModels() []any {
 		&User{},
 		&Organization{},
 		&Membership{},
+		&GitProvider{},
 		&Project{},
 		&ComposeApp{},
 		&Application{},

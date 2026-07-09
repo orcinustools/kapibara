@@ -1,0 +1,39 @@
+# RBAC for the in-cluster Kapibara control-plane so it can stream pod logs and
+# read pod metrics via the Kubernetes API using its ServiceAccount.
+#
+#   kubectl apply -f deploy/rbac.yaml
+#
+# orcinus does not let a compose service pick its ServiceAccount, so the pod runs
+# under the namespace's "default" ServiceAccount — this binds the needed read
+# access to it. (If you deploy Kapibara into a namespace other than "default",
+# change the subject namespace below to match.)
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kapibara-cluster-access
+rules:
+  # Read pods (+ logs), nodes, and namespaces (Logs tab, Cluster page).
+  - apiGroups: [""]
+    resources: ["pods", "pods/log", "nodes", "namespaces"]
+    verbs: ["get", "list", "watch"]
+  # Exec into pods (used by some day-2 actions).
+  - apiGroups: [""]
+    resources: ["pods/exec"]
+    verbs: ["create"]
+  # Read pod + node metrics from metrics-server (Metrics tab / history).
+  - apiGroups: ["metrics.k8s.io"]
+    resources: ["pods", "nodes"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: kapibara-cluster-access
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: kapibara-cluster-access
+subjects:
+  - kind: ServiceAccount
+    name: default
+    namespace: default

@@ -76,12 +76,74 @@ export function saveAppEnv(appId: string, env: Record<string, string>, secretKey
 
 // Persist an application's ingress domain + TLS. Unlike env, `domain`/`tls`
 // ARE returned by the app list/get (json:"domain"/"tls"), so the UI can read
-// current values back. Update is via PUT /apps/{id}. NOTE: the backend keeps
-// the existing domain when an empty string is sent (orDefault), so a domain can
-// be changed but not fully cleared through this call — `tls` is always applied.
+// current values back. Update is via PUT /apps/{id}. The backend models
+// `domain` as a nullable field: sending an empty string explicitly CLEARS the
+// ingress host (removes the domain on the next deploy); `tls` is always applied.
 export function saveAppDomain(appId: string, domain: string, tls: boolean) {
   return api.put(`/apps/${appId}`, { domain, tls });
 }
+
+// Org members / RBAC (M1). Members are existing kapibara users linked to an org
+// with a role (owner | admin | member). There is no invite flow: `add` links a
+// user that already registered, by email. Only owners/admins may add, change
+// roles, or remove; the last owner is protected server-side.
+export type MemberRole = "owner" | "admin" | "member";
+export interface Member {
+  userId: string;
+  email: string;
+  name: string;
+  role: MemberRole;
+}
+
+export const membersApi = {
+  list: (orgId: string, signal?: AbortSignal) =>
+    api.get<{ members: Member[] }>(`/orgs/${orgId}/members`, signal).then((r) => r.members || []),
+  add: (orgId: string, email: string, role: MemberRole) =>
+    api.post<Member>(`/orgs/${orgId}/members`, { email, role }),
+  setRole: (orgId: string, userId: string, role: MemberRole) =>
+    api.put(`/orgs/${orgId}/members/${userId}`, { role }),
+  remove: (orgId: string, userId: string) => api.del(`/orgs/${orgId}/members/${userId}`),
+};
+
+// Git providers (M3). A connected source-control account (GitHub/GitLab) whose
+// access token is stored write-only server-side (json:"-") and injected into
+// clone URLs for private repos. Connect via a personal access token, or via the
+// OAuth flow when server credentials are configured. `repos` powers the app
+// create repo picker.
+export type GitProviderType = "github" | "gitlab";
+export interface GitProvider {
+  id: string;
+  organizationId: string;
+  type: GitProviderType;
+  name: string;
+  accountLogin: string;
+  baseUrl: string;
+  authKind: string; // pat | oauth
+}
+export interface GitRepo {
+  fullName: string;
+  cloneUrl: string;
+  private: boolean;
+  defaultBranch: string;
+}
+
+export const gitApi = {
+  list: (orgId: string, signal?: AbortSignal) =>
+    api.get<{ providers: GitProvider[] }>(`/orgs/${orgId}/git-providers`, signal).then((r) => r.providers || []),
+  connectPAT: (orgId: string, body: { type: GitProviderType; name: string; token: string; baseUrl?: string }) =>
+    api.post<GitProvider>(`/orgs/${orgId}/git-providers`, body),
+  remove: (providerId: string) => api.del(`/git-providers/${providerId}`),
+  repos: (providerId: string, signal?: AbortSignal) =>
+    api.get<{ repositories: GitRepo[] }>(`/git-providers/${providerId}/repos`, signal).then((r) => r.repositories || []),
+  // Returns { authorizeUrl } when OAuth is configured, else throws (501).
+  oauthStart: (orgId: string, type: GitProviderType, params?: { name?: string; baseUrl?: string }) => {
+    const q = new URLSearchParams();
+    if (params?.name) q.set("name", params.name);
+    if (params?.baseUrl) q.set("baseUrl", params.baseUrl);
+    const qs = q.toString();
+    return api.get<{ authorizeUrl: string }>(`/orgs/${orgId}/git-providers/oauth/${type}/start${qs ? "?" + qs : ""}`);
+  },
+};
 
 // Database backup configs (M8). A config schedules (or manually triggers) a dump
 // of one managed database to a local path or an S3-compatible bucket. NOTE: the

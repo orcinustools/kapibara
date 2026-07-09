@@ -139,7 +139,103 @@ func cliCommands() []*cobra.Command {
 		deployCmd(),
 		appCmd(),
 		deploymentCmd(),
+		secretCmd(),
 	}
+}
+
+// secretCmd manages cluster secrets (import/list/remove). Secret values are
+// write-only server-side: the list endpoint returns only names + key counts.
+func secretCmd() *cobra.Command {
+	cmd := &cobra.Command{Use: "secret", Short: "Manage cluster secrets"}
+
+	list := &cobra.Command{
+		Use:   "list",
+		Short: "List cluster secrets (names + key counts; values are never returned)",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			client := newAPIClient(loadCLIConfig())
+			var out struct {
+				Secrets []struct {
+					Name string `json:"name"`
+					Keys int    `json:"keys"`
+				} `json:"secrets"`
+			}
+			if err := client.do(cmd.Context(), http.MethodGet, "/api/v1/secrets", nil, &out); err != nil {
+				return err
+			}
+			if len(out.Secrets) == 0 {
+				fmt.Println("no secrets")
+				return nil
+			}
+			for _, s := range out.Secrets {
+				fmt.Printf("%-32s  %d key(s)\n", s.Name, s.Keys)
+			}
+			return nil
+		},
+	}
+
+	var data []string
+	var envFile string
+	put := &cobra.Command{
+		Use:   "put NAME",
+		Short: "Create or replace a secret from --data KEY=VALUE pairs and/or --env-file",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			kv := map[string]string{}
+			if envFile != "" {
+				b, err := os.ReadFile(envFile)
+				if err != nil {
+					return fmt.Errorf("read env file: %w", err)
+				}
+				for _, line := range strings.Split(string(b), "\n") {
+					line = strings.TrimSpace(line)
+					if line == "" || strings.HasPrefix(line, "#") {
+						continue
+					}
+					k, v, ok := strings.Cut(line, "=")
+					if !ok {
+						return fmt.Errorf("invalid env-file line %q (want KEY=VALUE)", line)
+					}
+					kv[strings.TrimSpace(k)] = strings.Trim(strings.TrimSpace(v), `"'`)
+				}
+			}
+			for _, d := range data {
+				k, v, ok := strings.Cut(d, "=")
+				if !ok {
+					return fmt.Errorf("invalid --data %q (want KEY=VALUE)", d)
+				}
+				kv[k] = v
+			}
+			if len(kv) == 0 {
+				return fmt.Errorf("provide at least one --data KEY=VALUE or --env-file")
+			}
+			client := newAPIClient(loadCLIConfig())
+			body := map[string]any{"name": args[0], "data": kv}
+			if err := client.do(cmd.Context(), http.MethodPost, "/api/v1/secrets", body, nil); err != nil {
+				return err
+			}
+			fmt.Printf("✓ secret %q saved (%d key(s))\n", args[0], len(kv))
+			return nil
+		},
+	}
+	put.Flags().StringArrayVar(&data, "data", nil, "KEY=VALUE secret entry (repeatable)")
+	put.Flags().StringVar(&envFile, "env-file", "", "read KEY=VALUE lines from a .env file")
+
+	rm := &cobra.Command{
+		Use:   "rm NAME",
+		Short: "Delete a cluster secret",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			client := newAPIClient(loadCLIConfig())
+			if err := client.do(cmd.Context(), http.MethodDelete, "/api/v1/secrets/"+args[0], nil, nil); err != nil {
+				return err
+			}
+			fmt.Printf("✓ secret %q deleted\n", args[0])
+			return nil
+		},
+	}
+
+	cmd.AddCommand(list, put, rm)
+	return cmd
 }
 
 func loginCmd() *cobra.Command {
@@ -309,7 +405,7 @@ func appCmd() *cobra.Command {
 	cmd := &cobra.Command{Use: "app", Short: "Manage git/image applications"}
 	var project, name, buildType, repo, branch, dockerfile, image, domain string
 	var cpuLimit, memoryLimit, volumeSize string
-	var mounts []string
+	var mounts, envPairs, secretKeys, command []string
 	var port int
 	var tls, follow bool
 	deploy := &cobra.Command{
@@ -325,10 +421,19 @@ func appCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			env := map[string]string{}
+			for _, e := range envPairs {
+				k, v, ok := strings.Cut(e, "=")
+				if !ok {
+					return fmt.Errorf("invalid --env %q (want KEY=VALUE)", e)
+				}
+				env[k] = v
+			}
 			app, err := ensureApp(cmd.Context(), client, p.ID, appSpec{
 				Name: name, BuildType: buildType, RepoURL: repo, Branch: branch,
 				DockerfilePath: dockerfile, Image: image, Port: port, Domain: domain, TLS: tls,
 				CPULimit: cpuLimit, MemoryLimit: memoryLimit, VolumeSize: volumeSize, Mounts: mounts,
+				Env: env, SecretKeys: secretKeys, Command: command,
 			})
 			if err != nil {
 				return err
@@ -362,6 +467,9 @@ func appCmd() *cobra.Command {
 	deploy.Flags().StringVar(&memoryLimit, "memory-limit", "", "memory limit, e.g. 512M")
 	deploy.Flags().StringArrayVar(&mounts, "mount", nil, "persistent volume mount name:path (repeatable)")
 	deploy.Flags().StringVar(&volumeSize, "volume-size", "", "PVC size for mounts, e.g. 1Gi")
+	deploy.Flags().StringArrayVar(&envPairs, "env", nil, "environment variable KEY=VALUE (repeatable)")
+	deploy.Flags().StringArrayVar(&secretKeys, "secret", nil, "mark an --env key as a cluster Secret (repeatable)")
+	deploy.Flags().StringArrayVar(&command, "command", nil, "override the container command (repeatable, in order)")
 	deploy.Flags().BoolVar(&follow, "follow", true, "stream deployment status/logs until it finishes")
 	cmd.AddCommand(deploy)
 	return cmd
@@ -452,6 +560,9 @@ type appSpec struct {
 	TLS                                                             bool
 	CPULimit, MemoryLimit, VolumeSize                               string
 	Mounts                                                          []string // "name:path"
+	Env                                                             map[string]string
+	SecretKeys                                                      []string
+	Command                                                         []string
 }
 
 type appInfo struct {
@@ -518,16 +629,20 @@ func ensureApp(ctx context.Context, client *apiClient, projectID string, spec ap
 	if err := client.do(ctx, http.MethodGet, "/api/v1/projects/"+projectID+"/apps", nil, &list); err != nil {
 		return nil, err
 	}
-	for i := range list.Applications {
-		if list.Applications[i].Name == spec.Name {
-			return &list.Applications[i], nil
-		}
-	}
 	body := map[string]any{
 		"name": spec.Name, "buildType": spec.BuildType,
 		"repoUrl": spec.RepoURL, "branch": spec.Branch, "dockerfilePath": spec.DockerfilePath,
 		"image": spec.Image, "port": spec.Port, "domain": spec.Domain, "tls": spec.TLS,
 		"cpuLimit": spec.CPULimit, "memoryLimit": spec.MemoryLimit, "volumeSize": spec.VolumeSize,
+	}
+	if len(spec.Env) > 0 {
+		body["env"] = spec.Env
+	}
+	if len(spec.SecretKeys) > 0 {
+		body["secretKeys"] = spec.SecretKeys
+	}
+	if len(spec.Command) > 0 {
+		body["command"] = spec.Command
 	}
 	var mounts []map[string]string
 	for _, m := range spec.Mounts {
@@ -539,6 +654,17 @@ func ensureApp(ctx context.Context, client *apiClient, projectID string, spec ap
 	}
 	if len(mounts) > 0 {
 		body["mounts"] = mounts
+	}
+	// If the app already exists, update it (PUT) so env/domain/image changes on
+	// re-deploy take effect; otherwise create it.
+	for i := range list.Applications {
+		if list.Applications[i].Name == spec.Name {
+			id := list.Applications[i].ID
+			if err := client.do(ctx, http.MethodPut, "/api/v1/apps/"+id, body, nil); err != nil {
+				return nil, err
+			}
+			return &list.Applications[i], nil
+		}
 	}
 	var created struct {
 		Application appInfo `json:"application"`

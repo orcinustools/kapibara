@@ -98,6 +98,9 @@ type Application struct {
 	// Git source (for dockerfile/nixpacks builds).
 	RepoURL        string `gorm:"size:512" json:"repoUrl"`
 	Branch         string `gorm:"size:255" json:"branch"`
+	// GitProviderID, if set, links a connected GitProvider whose token is
+	// injected into the clone URL for private repositories (M3).
+	GitProviderID  string `gorm:"index;size:36" json:"gitProviderId"`
 	ContextDir     string `gorm:"size:512" json:"contextDir"`
 	DockerfilePath string `gorm:"size:512" json:"dockerfilePath"`
 
@@ -146,6 +149,27 @@ type Application struct {
 	WebhookSecret string `gorm:"uniqueIndex;size:64" json:"-"`
 	// AutoDeploy enables deploying automatically when a webhook fires.
 	AutoDeploy bool `json:"autoDeploy"`
+}
+
+// GitProvider is a connected source-control account for an organization. It
+// holds an access token (PAT or OAuth) used to list private repositories and
+// to authenticate clones during builds.
+type GitProvider struct {
+	Base
+	OrganizationID string `gorm:"index;size:36;not null" json:"organizationId"`
+	// Type: github | gitlab
+	Type string `gorm:"size:32;not null" json:"type"`
+	// Name is a human label for the connection.
+	Name string `gorm:"size:255" json:"name"`
+	// AccountLogin is the authenticated account's username (filled on connect).
+	AccountLogin string `gorm:"size:255" json:"accountLogin"`
+	// BaseURL targets a self-hosted/enterprise instance; empty → public SaaS.
+	BaseURL string `gorm:"size:512" json:"baseUrl"`
+	// AuthKind records how the token was obtained: pat | oauth.
+	AuthKind string `gorm:"size:16;not null;default:pat" json:"authKind"`
+	// Token is the PAT/OAuth access token. Write-only: accepted on connect but
+	// never serialized back to clients.
+	Token string `gorm:"size:512" json:"-"`
 }
 
 // Database is a one-click managed database instance.

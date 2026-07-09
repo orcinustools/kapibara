@@ -78,6 +78,59 @@ func (s *Store) Membership(userID, orgID string) (*Membership, error) {
 	return &m, nil
 }
 
+// MembershipsForOrg lists an org's memberships with their User preloaded,
+// oldest first (owner-first ordering is applied by callers if needed).
+func (s *Store) MembershipsForOrg(orgID string) ([]Membership, error) {
+	var ms []Membership
+	err := s.DB.Preload("User").
+		Where("organization_id = ?", orgID).
+		Order("created_at").Find(&ms).Error
+	return ms, err
+}
+
+// UpdateMembership saves changes to a membership (e.g. a role change).
+func (s *Store) UpdateMembership(m *Membership) error { return s.DB.Save(m).Error }
+
+// DeleteMembership soft-deletes a membership row.
+func (s *Store) DeleteMembership(id string) error {
+	return s.DB.Delete(&Membership{}, "id = ?", id).Error
+}
+
+// CountOrgOwners returns how many active owners an org has (used to prevent
+// removing/demoting the last owner).
+func (s *Store) CountOrgOwners(orgID string) (int64, error) {
+	var n int64
+	err := s.DB.Model(&Membership{}).
+		Where("organization_id = ? AND role = ?", orgID, RoleOwner).Count(&n).Error
+	return n, err
+}
+
+// --- git providers ---
+
+// CreateGitProvider inserts a connected source-control account.
+func (s *Store) CreateGitProvider(g *GitProvider) error { return s.DB.Create(g).Error }
+
+// GitProvidersForOrg lists an org's connected git providers.
+func (s *Store) GitProvidersForOrg(orgID string) ([]GitProvider, error) {
+	var gs []GitProvider
+	err := s.DB.Where("organization_id = ?", orgID).Order("created_at").Find(&gs).Error
+	return gs, err
+}
+
+// GitProviderByID looks up a git provider.
+func (s *Store) GitProviderByID(id string) (*GitProvider, error) {
+	var g GitProvider
+	if err := s.DB.First(&g, "id = ?", id).Error; err != nil {
+		return nil, wrap(err)
+	}
+	return &g, nil
+}
+
+// DeleteGitProvider soft-deletes a git provider row.
+func (s *Store) DeleteGitProvider(id string) error {
+	return s.DB.Delete(&GitProvider{}, "id = ?", id).Error
+}
+
 // --- projects ---
 
 // CreateProject inserts a project.
@@ -87,6 +140,14 @@ func (s *Store) CreateProject(p *Project) error { return s.DB.Create(p).Error }
 func (s *Store) ProjectsForOrg(orgID string) ([]Project, error) {
 	var ps []Project
 	err := s.DB.Where("organization_id = ?", orgID).Order("created_at DESC").Find(&ps).Error
+	return ps, err
+}
+
+// AllProjects lists every (non-deleted) project across all orgs. Used by the
+// background metrics sampler to accrue history for all projects.
+func (s *Store) AllProjects() ([]Project, error) {
+	var ps []Project
+	err := s.DB.Find(&ps).Error
 	return ps, err
 }
 

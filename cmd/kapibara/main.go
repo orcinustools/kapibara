@@ -26,7 +26,7 @@ func main() {
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
-	root.AddCommand(serveCmd(), migrateCmd(), versionCmd())
+	root.AddCommand(serveCmd(), migrateCmd(), versionCmd(), adminCmd(), skillCmd())
 	root.AddCommand(cliCommands()...)
 
 	if err := root.Execute(); err != nil {
@@ -63,6 +63,8 @@ func serveCmd() *cobra.Command {
 
 			// Background scheduler for due backups.
 			go srv.StartScheduler(ctx)
+			// Background sampler accrues per-project metric history.
+			go srv.StartMetricsSampler(ctx, 30*time.Second)
 
 			go func() {
 				fmt.Printf("kapibara %s listening on %s (engine: %s)\n",
