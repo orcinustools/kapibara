@@ -44,8 +44,13 @@ RUN set -eux; \
 
 # 4) Minimal runtime. Bundles git (clone), railpack (plan) and buildctl (build)
 #    so the control-plane can build from Git in-cluster without a Docker daemon.
-FROM alpine:3.20
-RUN apk add --no-cache ca-certificates git && adduser -D -u 10001 kapibara
+#    Uses a glibc base (not alpine/musl): railpack fetches a glibc `mise` at
+#    build time, which fails to exec under musl.
+FROM debian:bookworm-slim
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates git \
+    && rm -rf /var/lib/apt/lists/* \
+    && useradd -u 10001 -m -s /usr/sbin/nologin kapibara
 COPY --from=build /kapibara /usr/local/bin/kapibara
 COPY --from=tools /usr/local/bin/railpack /usr/local/bin/railpack
 COPY --from=moby/buildkit:latest /usr/bin/buildctl /usr/local/bin/buildctl
