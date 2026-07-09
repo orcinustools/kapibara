@@ -418,7 +418,7 @@ func deployCmd() *cobra.Command {
 
 func appCmd() *cobra.Command {
 	cmd := &cobra.Command{Use: "app", Short: "Manage git/image applications"}
-	var project, name, buildType, repo, branch, contextDir, dockerfile, image, domain string
+	var project, name, buildType, repo, branch, contextDir, dockerfile, image, domain, envFile string
 	var cpuLimit, memoryLimit, volumeSize string
 	var mounts, envPairs, secretKeys, command []string
 	var port int
@@ -436,13 +436,14 @@ func appCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			env := map[string]string{}
-			for _, e := range envPairs {
-				k, v, ok := strings.Cut(e, "=")
-				if !ok {
-					return fmt.Errorf("invalid --env %q (want KEY=VALUE)", e)
-				}
-				env[k] = v
+			env, err := mergeEnv(envFile, envPairs)
+			if err != nil {
+				return err
+			}
+			// Default the public host to <name>.<appsDomain> (with TLS) when the
+			// user didn't set one.
+			if domain, tls = autoDomain(cmd.Context(), client, name, domain, tls); domain != "" {
+				fmt.Printf("domain: https://%s\n", domain)
 			}
 			app, err := ensureApp(cmd.Context(), client, p.ID, appSpec{
 				Name: name, BuildType: buildType, RepoURL: repo, Branch: branch,
@@ -484,6 +485,7 @@ func appCmd() *cobra.Command {
 	deploy.Flags().StringArrayVar(&mounts, "mount", nil, "persistent volume mount name:path (repeatable)")
 	deploy.Flags().StringVar(&volumeSize, "volume-size", "", "PVC size for mounts, e.g. 1Gi")
 	deploy.Flags().StringArrayVar(&envPairs, "env", nil, "environment variable KEY=VALUE (repeatable)")
+	deploy.Flags().StringVar(&envFile, "env-file", "", "load env vars from a .env file (KEY=VALUE per line); --env overrides")
 	deploy.Flags().StringArrayVar(&secretKeys, "secret", nil, "mark an --env key as a cluster Secret (repeatable)")
 	deploy.Flags().StringArrayVar(&command, "command", nil, "override the container command (repeatable, in order)")
 	deploy.Flags().BoolVar(&follow, "follow", true, "stream deployment status/logs until it finishes")

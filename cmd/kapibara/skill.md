@@ -40,6 +40,11 @@ kapibara up --project <p> --name <app> --build railpack \
 - Packing honors `.dockerignore` (else `.gitignore`) and always excludes `.git`.
 - For a **Git repo** instead of local source, use the same flags with
   `kapibara app deploy --repo <git-url> --build railpack …`.
+- **Sensible defaults** (both `up` and `app deploy`): omit `--domain` and it
+  defaults to `<name>.<appsDomain>` with TLS; `up` also defaults `--port` to
+  `3000` and sets `$PORT`. Load a `.env` file with `--env-file .env` (individual
+  `--env KEY=VALUE` override it). So the minimal deploy is just:
+  `kapibara up --project <p> --name <app>`.
 
 Prefer `up`/`app deploy` for a **single service from source**. Author an
 `orcinus.yml` (below) for **multi-service** apps, managed-database wiring, or
