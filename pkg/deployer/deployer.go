@@ -144,6 +144,10 @@ func (d *Deployer) run(ctx context.Context, app *store.Application, project *sto
 
 	// 1. Fetch source (unless a prebuilt image).
 	if build.Type(app.BuildType) != build.Image {
+		if app.SourceArchive == "" && app.RepoURL == "" {
+			fail(fmt.Errorf("no source to build: set a git repo (--repo) or upload local source with `kapibara up`"))
+			return
+		}
 		dir, err := os.MkdirTemp(d.Cfg.DataDir, "build-*")
 		if err != nil {
 			fail(err)

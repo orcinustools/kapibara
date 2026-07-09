@@ -73,10 +73,9 @@ func (s *Server) handleCreateApp(w http.ResponseWriter, r *http.Request) {
 	}
 	switch req.BuildType {
 	case "dockerfile", "nixpacks", "railpack":
-		if req.RepoURL == "" {
-			writeError(w, http.StatusBadRequest, "repoUrl required for git builds")
-			return
-		}
+		// No repoUrl required: the source may be uploaded via `kapibara up`
+		// (POST /apps/{id}/source). The deployer enforces "a source exists"
+		// (repo or uploaded archive) at deploy time.
 	case "image":
 		if req.Image == "" {
 			writeError(w, http.StatusBadRequest, "image required for build type image")
