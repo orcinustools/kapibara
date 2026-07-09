@@ -80,6 +80,26 @@ Then set in `kapibara.compose.yml`:
 `kapibara image build` (Docker) or `kapibara image pack` (no Docker), and
 reference `image: registry/<project>/<image>:<tag>` in a deploy.
 
+## 4b. (Optional) Enable server-side Git builds (no Docker)
+
+By default the in-cluster control-plane cannot build from Git (no Docker in the
+pod). Deploy a BuildKit daemon and Kapibara will build **server-side** — it
+clones the repo, generates a plan with railpack (or reads your Dockerfile),
+drives BuildKit with `buildctl`, and pushes the image to the in-cluster registry;
+the cluster pulls it back through the gateway. No Docker on the client or server.
+
+```bash
+orcinus kubectl apply -f deploy/buildkitd.yaml      # buildkitd in ns orcinus-build
+```
+
+Then enable it in `kapibara.compose.yml` (uncomment):
+`KAPIBARA_INCLUSTER_BUILD=1`,
+`KAPIBARA_BUILDKIT_ADDR=tcp://buildkitd.orcinus-build.svc:1234`,
+`KAPIBARA_RAILPACK_FRONTEND=ghcr.io/railwayapp/railpack-frontend:v0.30.0`.
+The Kapibara image bundles `git`, `railpack`, and `buildctl` for this. Users then
+`kapibara deploy --build railpack --repo <git-url>` (or `dockerfile`) and the
+server does the rest.
+
 ## 5. Configure & deploy
 
 Edit `kapibara.compose.yml`:
@@ -121,11 +141,12 @@ apps and databases.
 
 ## Notes
 
-- **Building images (in-cluster Kapibara can't build from Git):** build where
-  you are and push to the registry gateway (step 4). `kapibara image build` uses
-  local Docker for full Dockerfiles; `kapibara image pack` assembles a base +
-  files in-process with **no Docker** (great for static sites / Go binaries, and
-  builds `linux/amd64` from any host). Then reference `registry/<project>/<image>`.
-  Image, compose, and one-click database deploys all work fully in-cluster.
+- **Building images:** either build server-side (step 4b — BuildKit in-cluster,
+  no Docker anywhere) or build where you are and push to the registry gateway
+  (step 4). `kapibara image build` uses local Docker for full Dockerfiles;
+  `kapibara image pack` assembles a base + files in-process with **no Docker**
+  (great for static sites / Go binaries, and builds `linux/amd64` from any host).
+  Then reference `registry/<project>/<image>`. Image, compose, and one-click
+  database deploys all work fully in-cluster.
 - **Namespace:** the manifests assume `default`. If you deploy elsewhere, set
   `KAPIBARA_NAMESPACE` and update the subject namespace in `rbac.yaml`.

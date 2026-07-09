@@ -31,6 +31,20 @@ type Config struct {
 	// "<RegistryPublic>/<path>" at deploy so the cluster pulls them from the
 	// registry gateway (e.g. kapibara.mayar.io).
 	RegistryPublic string
+
+	// InClusterBuild builds Git sources server-side with buildctl + BuildKit
+	// (no Docker) and pushes to the in-cluster registry; the cluster then pulls
+	// the image back through the public gateway.
+	InClusterBuild bool
+	// BuildkitAddr is the BuildKit daemon buildctl connects to.
+	BuildkitAddr string
+	// BuildPlatform is the target platform for in-cluster builds (linux/amd64).
+	BuildPlatform string
+	// RailpackFrontend is the railpack BuildKit frontend image.
+	RailpackFrontend string
+	// RegistryUpstream is the in-cluster registry buildkit pushes to over HTTP
+	// (e.g. http://registry.orcinus-registry.svc:5000).
+	RegistryUpstream string
 }
 
 // Deployer runs application deployments.
@@ -161,18 +175,38 @@ func (d *Deployer) run(ctx context.Context, app *store.Application, project *sto
 		imageRef = d.imageRef(project, app, sha)
 	}
 
-	dep.ImageRef = imageRef
-	_ = d.Store.UpdateDeployment(dep)
-
 	// 2. Build + publish (skipped for prebuilt images).
 	builder := &build.Builder{ClusterContainer: d.Cfg.ClusterContainer, Push: d.Cfg.Push}
-	if err := builder.Build(ctx, build.Request{
+	req := build.Request{
 		Type:       build.Type(app.BuildType),
 		ContextDir: contextDir,
 		Dockerfile: app.DockerfilePath,
 		ImageRef:   imageRef,
 		Log:        sink,
-	}); err != nil {
+	}
+	// Server-side, Docker-less build: buildkit pushes to the in-cluster registry
+	// and the cluster pulls the image back through the public gateway. The push
+	// target (internal registry host) and the pull reference (gateway host) share
+	// the same org-scoped repository path.
+	if d.Cfg.InClusterBuild && build.Type(app.BuildType) != build.Image {
+		builder.Frontend = true
+		builder.BuildkitAddr = d.Cfg.BuildkitAddr
+		builder.Platform = d.Cfg.BuildPlatform
+		builder.RailpackFrontend = d.Cfg.RailpackFrontend
+		repo := d.registryRepo(project, app, dep.CommitSHA) // registry/<scope>/kapibara/<proj>-<app>:<tag>
+		if host := registryHost(d.Cfg.RegistryUpstream); host != "" {
+			req.PushImage = host + "/" + repo
+		}
+		if d.Cfg.RegistryPublic != "" {
+			imageRef = strings.TrimRight(d.Cfg.RegistryPublic, "/") + "/" + repo
+			req.ImageRef = imageRef
+		}
+	}
+
+	dep.ImageRef = imageRef
+	_ = d.Store.UpdateDeployment(dep)
+
+	if err := builder.Build(ctx, req); err != nil {
 		fail(err)
 		return
 	}
@@ -300,6 +334,33 @@ func (d *Deployer) imageRef(project *store.Project, app *store.Application, sha 
 		name = strings.TrimRight(d.Cfg.RegistryPrefix, "/") + "/" + name
 	}
 	return name + ":" + tag
+}
+
+// registryRepo returns the org-scoped repository path (no host) used for
+// in-cluster builds: "registry/<scope>/kapibara/<orcinusProject>-<app>:<tag>".
+// The buildkit push target and the gateway pull reference share this path, so
+// what buildkit pushes to the in-cluster registry is exactly what the cluster
+// pulls back through the public gateway.
+func (d *Deployer) registryRepo(project *store.Project, app *store.Application, sha string) string {
+	tag := "latest"
+	if len(sha) >= 12 {
+		tag = sha[:12]
+	}
+	name := fmt.Sprintf("kapibara/%s-%s", project.OrcinusProject, sanitize(app.Name))
+	repo := "registry/" + name
+	if scope := d.orgScope(project); scope != "" {
+		repo = "registry/" + scope + "/" + name
+	}
+	return repo + ":" + tag
+}
+
+// registryHost strips the scheme from a registry upstream URL, yielding the
+// host[:port] buildkit pushes to (e.g. registry.orcinus-registry.svc:5000).
+func registryHost(upstream string) string {
+	u := strings.TrimSpace(upstream)
+	u = strings.TrimPrefix(u, "http://")
+	u = strings.TrimPrefix(u, "https://")
+	return strings.TrimRight(u, "/")
 }
 
 // orgScope returns the org slug used to namespace a project's registry images.

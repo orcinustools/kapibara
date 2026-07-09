@@ -55,6 +55,11 @@ func New(cfg config.Config, st *store.Store) *Server {
 			ClusterContainer: cfg.ClusterContainer,
 			DataDir:          cfg.DataDir,
 			RegistryPublic:   cfg.RegistryPublic,
+			InClusterBuild:   cfg.InClusterBuild,
+			BuildkitAddr:     cfg.BuildkitAddr,
+			BuildPlatform:    cfg.BuildPlatform,
+			RailpackFrontend: cfg.RailpackFrontend,
+			RegistryUpstream: cfg.RegistryUpstream,
 		}),
 	}
 	// Wire deploy notifications through the org's configured channels.

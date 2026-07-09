@@ -1,0 +1,88 @@
+# BuildKit daemon for server-side, Docker-less Git builds.
+#
+# The Kapibara control-plane clones a repo, runs `railpack prepare` to make a
+# build plan, then drives this daemon with `buildctl` (railpack/Dockerfile
+# frontend) and has it push the image straight to the in-cluster registry. The
+# cluster then pulls that image back through the public registry gateway.
+#
+#   orcinus kubectl apply -f deploy/buildkitd.yaml
+#
+# Then point the control-plane at it:
+#   KAPIBARA_INCLUSTER_BUILD=1
+#   KAPIBARA_BUILDKIT_ADDR=tcp://buildkitd.orcinus-build.svc:1234
+#
+# Requires the orcinus `registry` plugin (the push target below).
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: orcinus-build
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: buildkitd-config
+  namespace: orcinus-build
+data:
+  buildkitd.toml: |
+    debug = false
+    # The in-cluster registry is served over plain HTTP; allow pushes to it.
+    [registry."registry.orcinus-registry.svc:5000"]
+      http = true
+      insecure = true
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: buildkitd
+  namespace: orcinus-build
+  labels: { app: buildkitd }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: buildkitd }
+  template:
+    metadata:
+      labels: { app: buildkitd }
+    spec:
+      containers:
+        - name: buildkitd
+          image: moby/buildkit:latest
+          args:
+            - --addr
+            - unix:///run/buildkit/buildkitd.sock
+            - --addr
+            - tcp://0.0.0.0:1234
+            - --config
+            - /etc/buildkit/buildkitd.toml
+          # BuildKit needs privileges to set up its build sandboxes.
+          securityContext:
+            privileged: true
+          ports:
+            - containerPort: 1234
+          readinessProbe:
+            exec:
+              command: ["buildctl", "debug", "workers"]
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          volumeMounts:
+            - name: config
+              mountPath: /etc/buildkit
+            - name: cache
+              mountPath: /var/lib/buildkit
+      volumes:
+        - name: config
+          configMap:
+            name: buildkitd-config
+        - name: cache
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: buildkitd
+  namespace: orcinus-build
+spec:
+  selector: { app: buildkitd }
+  ports:
+    - port: 1234
+      targetPort: 1234

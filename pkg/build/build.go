@@ -34,7 +34,11 @@ type Request struct {
 	ContextDir string // directory containing the source
 	Dockerfile string // path relative to ContextDir (default "Dockerfile")
 	ImageRef   string // tag to produce, e.g. kapibara/shop-web:abc123
-	Log        io.Writer
+	// PushImage, when set (Frontend mode), is the registry reference buildctl
+	// pushes to. It may differ from ImageRef: the cluster pulls ImageRef through
+	// the public gateway while buildkit pushes to the in-cluster registry.
+	PushImage string
+	Log       io.Writer
 }
 
 // Builder builds images from source.
@@ -44,6 +48,22 @@ type Builder struct {
 	ClusterContainer string
 	// Push, if true, runs `docker push` after building (registry mode).
 	Push bool
+
+	// Frontend enables server-side, Docker-less builds: source is built with
+	// `buildctl` against a BuildKit daemon (using a BuildKit frontend) and the
+	// image is pushed straight to the registry. This is how the in-cluster
+	// control-plane builds from Git without a Docker daemon. Requires buildctl
+	// (and railpack, for railpack builds) on PATH and a reachable BuildkitAddr.
+	Frontend bool
+	// BuildkitAddr is the buildctl --addr (e.g. tcp://buildkitd:1234). Falls
+	// back to $BUILDKIT_HOST when empty.
+	BuildkitAddr string
+	// Platform is the target build platform (e.g. linux/amd64). Defaults to
+	// linux/amd64 so builds run for the cluster regardless of the host arch.
+	Platform string
+	// RailpackFrontend is the railpack BuildKit frontend image, pinned to the
+	// railpack version in the image (e.g. ghcr.io/railwayapp/railpack-frontend).
+	RailpackFrontend string
 }
 
 // Build produces the image described by req and publishes it to the cluster.
@@ -51,6 +71,12 @@ func (b *Builder) Build(ctx context.Context, req Request) error {
 	log := req.Log
 	if log == nil {
 		log = io.Discard
+	}
+
+	// Server-side path: build with buildctl + a BuildKit frontend and push the
+	// image directly to the registry — no Docker daemon on this host.
+	if b.Frontend {
+		return b.frontendBuild(ctx, req, log)
 	}
 
 	switch req.Type {
@@ -110,6 +136,88 @@ func (b *Builder) railpackBuild(ctx context.Context, req Request, log io.Writer)
 			"BUILDKIT_HOST=docker-container://buildkit)")
 	}
 	return run(ctx, log, "railpack", "build", req.ContextDir, "--name", req.ImageRef)
+}
+
+// frontendBuild builds with buildctl against a BuildKit daemon and pushes the
+// resulting image straight to the registry — no Docker daemon required. This is
+// the in-cluster build path used by the control-plane: for railpack it runs
+// `railpack prepare` to generate a build plan and hands it to the railpack
+// BuildKit frontend; for Dockerfile it uses the built-in dockerfile frontend.
+func (b *Builder) frontendBuild(ctx context.Context, req Request, log io.Writer) error {
+	addr := b.BuildkitAddr
+	if addr == "" {
+		addr = os.Getenv("BUILDKIT_HOST")
+	}
+	if addr == "" {
+		return fmt.Errorf("in-cluster build needs a BuildKit daemon: set BUILDKIT_HOST (e.g. tcp://buildkitd:1234)")
+	}
+	if _, err := exec.LookPath("buildctl"); err != nil {
+		return fmt.Errorf("buildctl not found in the image; the control-plane image must bundle buildctl for in-cluster builds")
+	}
+	pushRef := req.PushImage
+	if pushRef == "" {
+		pushRef = req.ImageRef
+	}
+	if pushRef == "" {
+		return fmt.Errorf("no image reference to push")
+	}
+	platform := b.Platform
+	if platform == "" {
+		platform = "linux/amd64"
+	}
+	// The in-cluster registry is served over plain HTTP; allow buildkit to push
+	// insecurely (the daemon config also marks the host http=true).
+	output := fmt.Sprintf("type=image,name=%s,push=true,registry.insecure=true", pushRef)
+
+	switch req.Type {
+	case Railpack:
+		if _, err := exec.LookPath("railpack"); err != nil {
+			return fmt.Errorf("railpack not found in the image; required to prepare railpack build plans")
+		}
+		planDir, err := os.MkdirTemp("", "railpack-plan-*")
+		if err != nil {
+			return err
+		}
+		defer os.RemoveAll(planDir)
+		if err := run(ctx, log, "railpack", "prepare", req.ContextDir,
+			"--plan-out", filepath.Join(planDir, "railpack-plan.json"),
+			"--info-out", filepath.Join(planDir, "railpack-info.json")); err != nil {
+			return fmt.Errorf("railpack prepare: %w", err)
+		}
+		frontend := b.RailpackFrontend
+		if frontend == "" {
+			frontend = "ghcr.io/railwayapp/railpack-frontend"
+		}
+		return run(ctx, log, "buildctl", "--addr", addr, "build",
+			"--local", "context="+req.ContextDir,
+			"--local", "dockerfile="+planDir,
+			"--opt", "filename=railpack-plan.json",
+			"--frontend=gateway.v0",
+			"--opt", "source="+frontend,
+			"--opt", "platform="+platform,
+			"--output", output)
+	case Dockerfile:
+		dockerfile := req.Dockerfile
+		if dockerfile == "" {
+			dockerfile = "Dockerfile"
+		}
+		if _, err := os.Stat(filepath.Join(req.ContextDir, dockerfile)); err != nil {
+			return fmt.Errorf("dockerfile %q not found in context", dockerfile)
+		}
+		return run(ctx, log, "buildctl", "--addr", addr, "build",
+			"--frontend=dockerfile.v0",
+			"--local", "context="+req.ContextDir,
+			"--local", "dockerfile="+req.ContextDir,
+			"--opt", "filename="+dockerfile,
+			"--opt", "platform="+platform,
+			"--output", output)
+	case Nixpacks:
+		return fmt.Errorf("nixpacks is not supported for in-cluster builds; use railpack or a Dockerfile")
+	case Image:
+		return nil
+	default:
+		return fmt.Errorf("unknown build type %q", req.Type)
+	}
 }
 
 // publish makes the built image available to the cluster.

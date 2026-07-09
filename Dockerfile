@@ -24,10 +24,33 @@ RUN CGO_ENABLED=0 go build -trimpath \
     -ldflags "-s -w -X github.com/orcinustools/kapibara/pkg/version.Version=${VERSION} -X github.com/orcinustools/kapibara/pkg/version.GitCommit=${COMMIT}" \
     -o /kapibara ./cmd/kapibara
 
-# 3) Minimal runtime.
+# 3) Fetch the railpack binary (used to generate build plans for in-cluster,
+#    Docker-less Git builds). Keep RAILPACK_VERSION in sync with the frontend
+#    image referenced by KAPIBARA_RAILPACK_FRONTEND.
+FROM alpine:3.20 AS tools
+ARG TARGETARCH=amd64
+ARG RAILPACK_VERSION=0.30.0
+RUN apk add --no-cache curl tar
+RUN set -eux; \
+    case "$TARGETARCH" in \
+      amd64) RARCH=x86_64-unknown-linux-musl ;; \
+      arm64) RARCH=arm64-unknown-linux-musl ;; \
+      *)     RARCH=x86_64-unknown-linux-musl ;; \
+    esac; \
+    curl -sSL "https://github.com/railwayapp/railpack/releases/download/v${RAILPACK_VERSION}/railpack-v${RAILPACK_VERSION}-${RARCH}.tar.gz" -o /tmp/rp.tgz; \
+    tar -xzf /tmp/rp.tgz -C /usr/local/bin railpack; \
+    chmod +x /usr/local/bin/railpack; \
+    /usr/local/bin/railpack --version
+
+# 4) Minimal runtime. Bundles git (clone), railpack (plan) and buildctl (build)
+#    so the control-plane can build from Git in-cluster without a Docker daemon.
 FROM alpine:3.20
-RUN apk add --no-cache ca-certificates && adduser -D -u 10001 kapibara
+RUN apk add --no-cache ca-certificates git && adduser -D -u 10001 kapibara
 COPY --from=build /kapibara /usr/local/bin/kapibara
+COPY --from=tools /usr/local/bin/railpack /usr/local/bin/railpack
+COPY --from=moby/buildkit:latest /usr/bin/buildctl /usr/local/bin/buildctl
+# railpack/mise write their cache under $HOME and /tmp at build time.
+ENV HOME=/tmp
 USER kapibara
 EXPOSE 9000
 ENTRYPOINT ["kapibara"]
