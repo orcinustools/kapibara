@@ -94,7 +94,7 @@ func imageCmd() *cobra.Command {
 	build.Flags().StringVarP(&dockerfile, "dockerfile", "f", "", "path to the Dockerfile (default: <context>/Dockerfile)")
 	build.Flags().BoolVar(&noPush, "no-push", false, "build only; do not push")
 
-	cmd.AddCommand(build)
+	cmd.AddCommand(build, packImageCmd())
 	return cmd
 }
 
