@@ -223,10 +223,14 @@ func (d *Deployer) run(ctx context.Context, app *store.Application, project *sto
 	target := targetProject(app, project)
 	fmt.Fprintf(sink, "\ndeploying to cluster as project %q\n", target)
 	acme := os.Getenv("KAPIBARA_ACME_EMAIL")
+	// Apply without blocking on readiness: orcinus returns as soon as the
+	// objects are applied. Waiting made this POST exceed the client timeout for
+	// slower workloads (image pull, migrations). The rollout continues in the
+	// cluster; follow it with `kapibara deployment status` / `orcinus ps`.
 	res, err := d.Orcinus.Deploy(ctx, orcinus.DeployRequest{
 		Source:    source,
 		Project:   target,
-		Wait:      true,
+		Wait:      false,
 		ACMEEmail: acme,
 	})
 	if err != nil {
@@ -234,6 +238,7 @@ func (d *Deployer) run(ctx context.Context, app *store.Application, project *sto
 		return
 	}
 
+	fmt.Fprintf(sink, "applied %d object(s); rollout continues in the cluster\n", res.Applied)
 	sink.flush()
 	dep.Status = store.DeploySuccess
 	dep.Applied = res.Applied
@@ -247,7 +252,7 @@ func (d *Deployer) run(ctx context.Context, app *store.Application, project *sto
 	_ = d.Store.UpdateApplication(app)
 
 	d.notify(ctx, project, true, "Deployed "+app.Name,
-		fmt.Sprintf("%d objects applied (image %s)", res.Applied, imageRef))
+		fmt.Sprintf("%d objects applied (image %s); rollout in progress", res.Applied, imageRef))
 }
 
 // composeFor renders a single-service compose file from an application.

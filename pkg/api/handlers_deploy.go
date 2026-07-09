@@ -455,10 +455,12 @@ func (s *Server) handleRedeployDeployment(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	// Apply without blocking on readiness (avoids the client timeout on slow
+	// rollouts); the redeploy returns once objects are applied.
 	res, err := s.Orcinus.Deploy(r.Context(), orcinus.DeployRequest{
 		Source:    old.Source,
 		Project:   target,
-		Wait:      true,
+		Wait:      false,
 		ACMEEmail: r.URL.Query().Get("acmeEmail"),
 	})
 	if err != nil {
