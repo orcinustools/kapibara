@@ -55,7 +55,7 @@ resolvable and ports 80/443 must reach the ingress.
 ## 3. Grant cluster access (logs & metrics)
 
 ```bash
-kubectl apply -f deploy/rbac.yaml
+orcinus kubectl apply -f deploy/rbac.yaml
 ```
 
 Kapibara runs in-cluster and uses its ServiceAccount to read pod logs and
@@ -109,7 +109,7 @@ for the marked env keys).
 
 ```bash
 orcinus ps kapibara                       # pod Running
-kubectl get ingress,certificate | grep kapibara   # cert READY=True
+orcinus kubectl get ingress,certificate | grep kapibara   # cert READY=True
 curl -s https://kapibara.example.com/healthz      # {"engineHealthy":true,...}
 ```
 

@@ -219,10 +219,10 @@ Observed results:
 ## Troubleshooting
 
 - **App can't resolve `pg` / `cache`:** confirm the database Service exists
-  (`kubectl get svc` should list `pg`, `cache`). Managed DBs must publish their
+  (`orcinus kubectl get svc` should list `pg`, `cache`). Managed DBs must publish their
   port to get a Service; redeploy the database if it was created before this fix.
 - **TLS not issued:** the host must resolve publicly to the cluster and be
   reachable on :80 for the HTTP-01 challenge; the server needs
-  `KAPIBARA_ACME_EMAIL` set. Check `kubectl get certificate` for readiness.
+  `KAPIBARA_ACME_EMAIL` set. Check `orcinus kubectl get certificate` for readiness.
 - **Secret value not visible:** by design — secret values are write-only and
   never returned; only names + key counts are listed.

@@ -177,7 +177,7 @@ Watch the streamed log for pod status:
 - **`CrashLoopBackOff`** → the app started but exited (bad config, DB
   unreachable, failed migration). Check logs; confirm `DATABASE_URL`/host.
 - **TLS not `Ready`** → the host must resolve to the cluster and :80 be
-  reachable; check `kubectl get certificate`.
+  reachable; check `orcinus kubectl get certificate`.
 
 ## Deploy checklist
 

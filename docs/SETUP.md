@@ -124,7 +124,7 @@ TLS is issued automatically by cert-manager via the HTTP-01 challenge. Requireme
 3. Ports 80 and 443 reach the cluster's ingress.
 
 When you deploy an app with a domain + TLS, cert-manager requests a certificate;
-check readiness with `kubectl get certificate`.
+check readiness with `orcinus kubectl get certificate`.
 
 ---
 
@@ -218,4 +218,4 @@ You're ready to deploy. See the **[Deploy Guide](./DEPLOY-GUIDE.md)** for:
   must match the k3s node's container name (default `orcinus`) so the built
   image can be imported. Alternatively set `KAPIBARA_REGISTRY` to push instead.
 - **TLS never becomes ready** — confirm the host resolves to the server and
-  :80 is reachable for the ACME HTTP-01 challenge; inspect `kubectl get certificate`.
+  :80 is reachable for the ACME HTTP-01 challenge; inspect `orcinus kubectl get certificate`.

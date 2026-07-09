@@ -1,7 +1,7 @@
 # RBAC for the in-cluster Kapibara control-plane so it can stream pod logs and
 # read pod metrics via the Kubernetes API using its ServiceAccount.
 #
-#   kubectl apply -f deploy/rbac.yaml
+#   orcinus kubectl apply -f deploy/rbac.yaml
 #
 # orcinus does not let a compose service pick its ServiceAccount, so the pod runs
 # under the namespace's "default" ServiceAccount — this binds the needed read
