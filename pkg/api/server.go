@@ -54,6 +54,7 @@ func New(cfg config.Config, st *store.Store) *Server {
 			Push:             cfg.BuildPush,
 			ClusterContainer: cfg.ClusterContainer,
 			DataDir:          cfg.DataDir,
+			RegistryPublic:   cfg.RegistryPublic,
 		}),
 	}
 	// Wire deploy notifications through the org's configured channels.
@@ -71,6 +72,12 @@ func (s *Server) routes() {
 	r.Use(middleware.RealIP)
 	r.Use(middleware.Recoverer)
 	r.Use(middleware.Timeout(150 * time.Second))
+
+	// Docker Registry v2 gateway (served at the host root): pulls are anonymous
+	// so the cluster can fetch pushed images without a secret; pushes require a
+	// Kapibara account. No-op 501 unless KAPIBARA_REGISTRY_UPSTREAM is set.
+	r.Handle("/v2", s.registryHandler())
+	r.Handle("/v2/*", s.registryHandler())
 
 	// Open endpoints.
 	r.Get("/healthz", s.handleHealthz)

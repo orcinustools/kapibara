@@ -154,6 +154,36 @@ image changes take effect on the next deploy) instead of erroring.
 
 ---
 
+## 5b. Push your own images via the built-in registry gateway
+
+When the in-cluster registry is enabled and Kapibara is started with
+`KAPIBARA_REGISTRY_UPSTREAM` + `KAPIBARA_REGISTRY_PUBLIC`, Kapibara's own HTTPS
+host doubles as a **Docker registry gateway** (Docker token-auth): **pushes need
+a Kapibara login, pulls are anonymous** so the cluster fetches images with no
+pull secret.
+
+```bash
+# 1. Log in with your Kapibara account (password or a kap_ API token).
+docker login kapibara.example.com -u you@example.com
+
+# 2. Tag + push under a scope (e.g. your org/user id) and push.
+docker build -t kapibara.example.com/<scope>/myapp:1 .
+docker push  kapibara.example.com/<scope>/myapp:1
+```
+
+Then deploy it with the short form `kapibara/<scope>/myapp:1` — at deploy time
+Kapibara rewrites that to `kapibara.example.com/<scope>/myapp:1` so the cluster
+pulls it back through the gateway:
+
+```bash
+kapibara app deploy --project demo --name myapp \
+  --build image --image kapibara/<scope>/myapp:1 \
+  --port 8080 --domain myapp.apps.example.com --tls
+```
+
+This is the recommended path when Kapibara runs **in-cluster** (a pod can't build
+from Git): build on your machine (or CI), push to the gateway, deploy the image.
+
 ## 6. Worked example (verified end-to-end)
 
 ```bash

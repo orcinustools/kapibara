@@ -27,6 +27,10 @@ type Config struct {
 	Push             bool
 	ClusterContainer string
 	DataDir          string
+	// RegistryPublic rewrites app images written as "kapibara/<path>" to
+	// "<RegistryPublic>/<path>" at deploy so the cluster pulls them from the
+	// registry gateway (e.g. kapibara.mayar.io).
+	RegistryPublic string
 }
 
 // Deployer runs application deployments.
@@ -120,7 +124,7 @@ func (d *Deployer) run(ctx context.Context, app *store.Application, project *sto
 		d.notify(ctx, project, false, "Deploy failed: "+app.Name, err.Error())
 	}
 
-	imageRef := app.Image
+	imageRef := rewriteRegistryImage(app.Image, d.Cfg.RegistryPublic)
 	var contextDir string
 
 	// 1. Fetch source (unless a prebuilt image).
@@ -296,6 +300,17 @@ func (d *Deployer) imageRef(project *store.Project, app *store.Application, sha 
 		name = strings.TrimRight(d.Cfg.RegistryPrefix, "/") + "/" + name
 	}
 	return name + ":" + tag
+}
+
+// rewriteRegistryImage maps a friendly "kapibara/<path>" image reference to the
+// public registry gateway host so the cluster can pull it. Other refs pass
+// through unchanged.
+func rewriteRegistryImage(image, publicHost string) string {
+	const marker = "kapibara/"
+	if publicHost == "" || !strings.HasPrefix(image, marker) {
+		return image
+	}
+	return strings.TrimRight(publicHost, "/") + "/" + strings.TrimPrefix(image, marker)
 }
 
 func parseEnv(s string) map[string]string {

@@ -38,6 +38,17 @@ type Config struct {
 	// node; when set (and not pushing) images are imported into its containerd.
 	ClusterContainer string
 
+	// RegistryUpstream, when set, enables the Docker Registry v2 gateway at
+	// /v2/* — reverse-proxying to this in-cluster registry (e.g.
+	// http://registry.orcinus-registry.svc:5000). Reads are anonymous; pushes
+	// require a Kapibara account.
+	RegistryUpstream string
+	// RegistryPublic is the public host of the registry gateway (e.g.
+	// kapibara.mayar.io). At deploy time an app image written as
+	// "kapibara/<path>" is rewritten to "<RegistryPublic>/<path>" so users
+	// reference a short name and the cluster pulls it back through the gateway.
+	RegistryPublic string
+
 	// PublicURL is the externally reachable base URL of this kapibara server,
 	// used to build OAuth redirect URIs (e.g. https://paas.example.com). Falls
 	// back to the request host when empty.
@@ -67,6 +78,8 @@ func Load() Config {
 		RegistryPrefix:   os.Getenv("KAPIBARA_REGISTRY"),
 		BuildPush:        os.Getenv("KAPIBARA_BUILD_PUSH") == "1" || os.Getenv("KAPIBARA_BUILD_PUSH") == "true",
 		ClusterContainer: env("KAPIBARA_CLUSTER_CONTAINER", "orcinus"),
+		RegistryUpstream: os.Getenv("KAPIBARA_REGISTRY_UPSTREAM"),
+		RegistryPublic:   os.Getenv("KAPIBARA_REGISTRY_PUBLIC"),
 
 		PublicURL:          strings.TrimRight(os.Getenv("KAPIBARA_PUBLIC_URL"), "/"),
 		GitHubClientID:     os.Getenv("KAPIBARA_GITHUB_CLIENT_ID"),
