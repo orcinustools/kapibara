@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
@@ -150,22 +151,36 @@ func (d *Deployer) run(ctx context.Context, app *store.Application, project *sto
 		}
 		defer os.RemoveAll(dir)
 
-		fmt.Fprintf(sink, "cloning %s (%s)\n", app.RepoURL, app.Branch)
-		// Inject the connected git provider's token for private repos. The
-		// token is redacted from clone output by pkg/git.
-		token := ""
-		if app.GitProviderID != "" {
-			if gp, err := d.Store.GitProviderByID(app.GitProviderID); err == nil {
-				token = gp.Token
+		var sha string
+		if app.SourceArchive != "" {
+			// Uploaded local context (`kapibara up`): extract the tarball instead
+			// of cloning. The image tag is a content hash of the archive.
+			fmt.Fprintf(sink, "extracting uploaded source (%s)\n", filepath.Base(app.SourceArchive))
+			h, err := extractTarGz(app.SourceArchive, dir+"/src")
+			if err != nil {
+				fail(fmt.Errorf("extract uploaded source: %w", err))
+				return
 			}
-		}
-		sha, out, err := git.Clone(ctx, git.CloneOptions{
-			RepoURL: app.RepoURL, Ref: app.Branch, Dir: dir + "/src", Token: token,
-		})
-		sink.Write([]byte(out))
-		if err != nil {
-			fail(err)
-			return
+			sha = h
+		} else {
+			fmt.Fprintf(sink, "cloning %s (%s)\n", app.RepoURL, app.Branch)
+			// Inject the connected git provider's token for private repos. The
+			// token is redacted from clone output by pkg/git.
+			token := ""
+			if app.GitProviderID != "" {
+				if gp, err := d.Store.GitProviderByID(app.GitProviderID); err == nil {
+					token = gp.Token
+				}
+			}
+			s, out, err := git.Clone(ctx, git.CloneOptions{
+				RepoURL: app.RepoURL, Ref: app.Branch, Dir: dir + "/src", Token: token,
+			})
+			sink.Write([]byte(out))
+			if err != nil {
+				fail(err)
+				return
+			}
+			sha = s
 		}
 		dep.CommitSHA = sha
 		contextDir = dir + "/src"

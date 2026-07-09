@@ -158,6 +158,7 @@ func (s *Server) routes() {
 			r.Put("/apps/{appID}", s.handleUpdateApp)
 			r.Delete("/apps/{appID}", s.handleDeleteApp)
 			r.Post("/apps/{appID}/deploy", s.handleDeployApp)
+			r.Post("/apps/{appID}/source", s.handleUploadAppSource)
 			r.Get("/deployments/{deploymentID}", s.handleGetDeployment)
 			r.Post("/deployments/{deploymentID}/redeploy", s.handleRedeployDeployment)
 
