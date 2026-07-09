@@ -20,6 +20,8 @@ Browser e2e: `node web/e2e.mjs` (Playwright).
 
 Rilis: push tag `vX.Y.Z` → GitHub Actions ([`.github/workflows/release.yml`](./.github/workflows/release.yml)) build binari lintas-platform via GoReleaser.
 
+Skill untuk AI agent (cara menulis `orcinus.yml`): `kapibara skill` (cetak), `kapibara skill --example` (starter `orcinus.yml`), `kapibara skill --write .claude/skills/orcinus-deploy/SKILL.md` (install). Sumber ter-embed di [`cmd/kapibara/skill.md`](./cmd/kapibara/skill.md).
+
 ## Build & run
 
 ```bash

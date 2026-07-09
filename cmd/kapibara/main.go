@@ -26,7 +26,7 @@ func main() {
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
-	root.AddCommand(serveCmd(), migrateCmd(), versionCmd(), adminCmd())
+	root.AddCommand(serveCmd(), migrateCmd(), versionCmd(), adminCmd(), skillCmd())
 	root.AddCommand(cliCommands()...)
 
 	if err := root.Execute(); err != nil {

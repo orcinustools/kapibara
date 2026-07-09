@@ -1,0 +1,16 @@
+# orcinus.yml — a Kapibara/orcinus deploy file (docker-compose + x-orcinus-* hints).
+# Deploy:  orcinus deploy -f orcinus.yml --project myapp --acme-email you@example.com --wait
+services:
+  web:
+    image: nginx:alpine # or kapibara/<scope>/<name>:<tag> for the Kapibara registry
+    ports: ["80"] # a port is required for a Service + in-cluster DNS name
+    x-orcinus-expose: ingress
+    x-orcinus-host: web.apps.example.com
+    x-orcinus-tls: letsencrypt # cert-manager ClusterIssuer → HTTPS
+    environment:
+      EXAMPLE_ENV: "value"
+    # x-orcinus-secret: [SECRET_ENV]        # store selected env keys as a Secret
+    # deploy:
+    #   replicas: 2
+    #   resources:
+    #     limits: { cpus: "0.5", memory: 512M }
