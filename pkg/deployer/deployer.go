@@ -124,7 +124,7 @@ func (d *Deployer) run(ctx context.Context, app *store.Application, project *sto
 		d.notify(ctx, project, false, "Deploy failed: "+app.Name, err.Error())
 	}
 
-	imageRef := rewriteRegistryImage(app.Image, d.Cfg.RegistryPublic)
+	imageRef := RewriteRegistryImage(app.Image, d.Cfg.RegistryPublic, d.orgScope(project))
 	var contextDir string
 
 	// 1. Fetch source (unless a prebuilt image).
@@ -302,15 +302,40 @@ func (d *Deployer) imageRef(project *store.Project, app *store.Application, sha 
 	return name + ":" + tag
 }
 
-// rewriteRegistryImage maps a friendly "kapibara/<path>" image reference to the
-// public registry gateway host so the cluster can pull it. Other refs pass
-// through unchanged.
-func rewriteRegistryImage(image, publicHost string) string {
-	const marker = "kapibara/"
-	if publicHost == "" || !strings.HasPrefix(image, marker) {
+// orgScope returns the org slug used to namespace a project's registry images.
+func (d *Deployer) orgScope(project *store.Project) string {
+	if org, err := d.Store.OrgByID(project.OrganizationID); err == nil {
+		return org.Slug
+	}
+	return ""
+}
+
+// rewriteRegistryImage expands a Kapibara registry image reference to the full,
+// org-scoped path the cluster pulls through the gateway. It handles the
+// "registry/<project>/<image>:tag" convention (optionally already prefixed with
+// the public host), inserting the org scope right after "registry/":
+//
+//	registry/worker/api:1                 → <host>/registry/<scope>/worker/api:1
+//	<host>/registry/worker/api:1          → <host>/registry/<scope>/worker/api:1
+//	<host>/registry/<scope>/worker/api:1  → unchanged (idempotent)
+//
+// External references (nginx:alpine, ghcr.io/...) pass through unchanged.
+//
+// Exported so the compose deploy path can rewrite each service image too.
+func RewriteRegistryImage(image, publicHost, scope string) string {
+	host := strings.TrimRight(publicHost, "/")
+	if host == "" {
 		return image
 	}
-	return strings.TrimRight(publicHost, "/") + "/" + strings.TrimPrefix(image, marker)
+	path := strings.TrimPrefix(image, host+"/") // drop the host if already present
+	if !strings.HasPrefix(path, "registry/") {
+		return image // not a Kapibara-registry reference
+	}
+	rest := strings.TrimPrefix(path, "registry/")
+	if scope != "" && !strings.HasPrefix(rest, scope+"/") {
+		rest = scope + "/" + rest
+	}
+	return host + "/registry/" + rest
 }
 
 func parseEnv(s string) map[string]string {

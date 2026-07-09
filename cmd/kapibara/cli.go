@@ -357,7 +357,7 @@ func projectsCmd() *cobra.Command {
 
 func deployCmd() *cobra.Command {
 	var project, file string
-	var wait, noPrune bool
+	var wait, noPrune, follow bool
 	cmd := &cobra.Command{
 		Use:   "deploy",
 		Short: "Deploy a docker-compose file to a project",
@@ -380,25 +380,32 @@ func deployCmd() *cobra.Command {
 			}
 			prune := !noPrune
 			body := map[string]any{"source": string(src), "wait": wait, "prune": &prune}
+			// The deploy runs asynchronously server-side; it returns a deployment
+			// we then follow (streaming its log) unless --follow=false.
 			var out struct {
-				Applied   int      `json:"applied"`
-				Project   string   `json:"project"`
-				Installed []string `json:"installed"`
+				Deployment struct {
+					ID string `json:"id"`
+				} `json:"deployment"`
 			}
 			fmt.Printf("deploying %s → project %s (%s)…\n", file, p.Name, p.OrcinusProject)
 			if err := client.do(cmd.Context(), http.MethodPost, "/api/v1/projects/"+p.ID+"/deploy", body, &out); err != nil {
 				return err
 			}
-			fmt.Printf("✓ applied %d objects to %s\n", out.Applied, out.Project)
-			if len(out.Installed) > 0 {
-				fmt.Printf("  plugins installed: %s\n", strings.Join(out.Installed, ", "))
+			if out.Deployment.ID == "" {
+				return fmt.Errorf("server did not return a deployment id")
 			}
-			return nil
+			if !follow {
+				fmt.Printf("deployment %s started\n", out.Deployment.ID)
+				fmt.Printf("track it with: kapibara deployment status %s\n", out.Deployment.ID)
+				return nil
+			}
+			return followDeployment(cmd.Context(), client, out.Deployment.ID)
 		},
 	}
 	cmd.Flags().StringVar(&project, "project", "", "project name or id")
 	cmd.Flags().StringVarP(&file, "file", "f", "", "path to docker-compose file")
-	cmd.Flags().BoolVar(&wait, "wait", true, "wait for the cluster to become ready")
+	cmd.Flags().BoolVar(&wait, "wait", true, "wait for pods to become ready (server-side)")
+	cmd.Flags().BoolVar(&follow, "follow", true, "stream the deployment log until it finishes")
 	cmd.Flags().BoolVar(&noPrune, "no-prune", false, "do not prune resources removed from the compose")
 	return cmd
 }

@@ -1,12 +1,18 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"os"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
+	"gopkg.in/yaml.v3"
 
+	"github.com/orcinustools/kapibara/pkg/deployer"
 	"github.com/orcinustools/kapibara/pkg/orcinus"
 	"github.com/orcinustools/kapibara/pkg/store"
 )
@@ -195,7 +201,7 @@ func (s *Server) handleDeploy(w http.ResponseWriter, r *http.Request) {
 		ProjectID:    p.ID,
 		ComposeAppID: composeAppID,
 		Kind:         "compose",
-		Status:       store.DeployRunning,
+		Status:       store.DeployPending,
 		Source:       source,
 	}
 	if err := s.Store.CreateDeployment(dep); err != nil {
@@ -203,33 +209,148 @@ func (s *Server) handleDeploy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	res, err := s.Orcinus.Deploy(r.Context(), orcinus.DeployRequest{
-		Source:  source,
-		Project: s.composeTarget(p, composeAppID),
-		Wait:    req.Wait,
-		Prune:   req.Prune,
+	// Expand Kapibara-registry image references (registry/<proj>/<img>) to the
+	// full org-scoped gateway path so the cluster can pull them — the same
+	// rewrite the application deploy path applies, but across every compose
+	// service image.
+	source = s.rewriteComposeImages(source, p)
+
+	// Run the deploy asynchronously so it isn't bound by the HTTP request
+	// timeout: apply the compose, then stream pod-readiness progress into the
+	// deployment log. The client polls GET /deployments/{id} to follow along.
+	go s.runComposeDeploy(s.composeTarget(p, composeAppID), source, req.Wait, req.Prune, dep)
+
+	writeJSON(w, http.StatusAccepted, map[string]any{"deployment": dep})
+}
+
+// rewriteComposeImages rewrites each service's `image:` in a compose source via
+// the registry rewrite (host + org scope), leaving external images untouched.
+// Returns the original source unchanged if there is nothing to rewrite or on a
+// parse error (orcinus then reports any real problem).
+func (s *Server) rewriteComposeImages(source string, p *store.Project) string {
+	if s.Cfg.RegistryPublic == "" {
+		return source
+	}
+	scope := ""
+	if org, err := s.Store.OrgByID(p.OrganizationID); err == nil {
+		scope = org.Slug
+	}
+	var doc map[string]any
+	if err := yaml.Unmarshal([]byte(source), &doc); err != nil {
+		return source
+	}
+	svcs, ok := doc["services"].(map[string]any)
+	if !ok {
+		return source
+	}
+	changed := false
+	for _, v := range svcs {
+		svc, ok := v.(map[string]any)
+		if !ok {
+			continue
+		}
+		img, ok := svc["image"].(string)
+		if !ok {
+			continue
+		}
+		if nw := deployer.RewriteRegistryImage(img, s.Cfg.RegistryPublic, scope); nw != img {
+			svc["image"] = nw
+			changed = true
+		}
+	}
+	if !changed {
+		return source
+	}
+	out, err := yaml.Marshal(doc)
+	if err != nil {
+		return source
+	}
+	return string(out)
+}
+
+// runComposeDeploy applies a compose source via orcinus and, when wait is set,
+// polls pod readiness — streaming progress into the deployment's log — until the
+// pods are ready or a generous timeout elapses. It runs on a background context
+// so it survives past the originating HTTP request.
+func (s *Server) runComposeDeploy(target, source string, wait bool, prune *bool, dep *store.Deployment) {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
+	defer cancel()
+
+	var log strings.Builder
+	flush := func() { dep.Log = log.String(); _ = s.Store.UpdateDeployment(dep) }
+	logln := func(format string, a ...any) { fmt.Fprintf(&log, format+"\n", a...); flush() }
+	fail := func(msg string) { dep.Status = store.DeployFailed; dep.Error = msg; logln("✗ %s", msg) }
+
+	dep.Status = store.DeployRunning
+	flush()
+
+	logln("deploying to orcinus project %q…", target)
+	res, err := s.Orcinus.Deploy(ctx, orcinus.DeployRequest{
+		Source:    source,
+		Project:   target,
+		Wait:      false, // apply now; we poll readiness ourselves so we can stream it
+		Prune:     prune,
+		ACMEEmail: os.Getenv("KAPIBARA_ACME_EMAIL"),
 	})
 	if err != nil {
-		dep.Status = store.DeployFailed
-		dep.Error = err.Error()
-		_ = s.Store.UpdateDeployment(dep)
-		writeError(w, http.StatusBadGateway, err.Error())
+		fail("orcinus deploy: " + err.Error())
 		return
 	}
-
-	dep.Status = store.DeploySuccess
 	dep.Applied = res.Applied
 	if b, e := json.Marshal(res.Installed); e == nil {
 		dep.Installed = string(b)
 	}
-	_ = s.Store.UpdateDeployment(dep)
+	logln("applied %d object(s)", res.Applied)
+	if len(res.Installed) > 0 {
+		logln("plugins installed: %s", strings.Join(res.Installed, ", "))
+	}
 
-	writeJSON(w, http.StatusOK, map[string]any{
-		"deployment": dep,
-		"applied":    res.Applied,
-		"installed":  res.Installed,
-		"project":    res.Project,
-	})
+	if !wait {
+		dep.Status = store.DeploySuccess
+		logln("✓ done")
+		return
+	}
+
+	logln("waiting for pods to become ready…")
+	deadline := time.Now().Add(12 * time.Minute)
+	last := ""
+	for {
+		if time.Now().After(deadline) {
+			fail("timed out waiting for pods to become ready; last status: " + last)
+			return
+		}
+		if pods, e := s.Orcinus.Pods(ctx, target); e == nil && len(pods) > 0 {
+			ready := 0
+			parts := make([]string, 0, len(pods))
+			for _, pd := range pods {
+				parts = append(parts, fmt.Sprintf("%s=%s(%s)", pd.Name, pd.Status, pd.Ready))
+				if pd.Status == "Running" && podReady(pd.Ready) {
+					ready++
+				}
+			}
+			if cur := strings.Join(parts, "  "); cur != last {
+				logln("pods: %s", cur)
+				last = cur
+			}
+			if ready == len(pods) {
+				dep.Status = store.DeploySuccess
+				logln("✓ all %d pod(s) ready", ready)
+				return
+			}
+		}
+		select {
+		case <-ctx.Done():
+			fail(ctx.Err().Error())
+			return
+		case <-time.After(5 * time.Second):
+		}
+	}
+}
+
+// podReady reports whether a "ready" string like "1/1" means all containers ready.
+func podReady(ready string) bool {
+	a, b, ok := strings.Cut(ready, "/")
+	return ok && a == b && a != "0" && a != ""
 }
 
 // --- runtime views (proxied from orcinus) ---

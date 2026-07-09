@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 )
 
 // fakeEngine records deploy calls and serves canned responses.
@@ -69,15 +70,33 @@ func TestComposeDeployFlow(t *testing.T) {
 		t.Errorf("convert objects = %v", conv["objects"])
 	}
 
-	// Deploy inline source.
+	// Deploy inline source — runs asynchronously, returns 202 + a deployment.
 	resp, dep := h.do(http.MethodPost, "/api/v1/projects/"+projID+"/deploy", token, map[string]any{
 		"source": compose, "wait": false,
 	})
-	if resp.StatusCode != http.StatusOK {
+	if resp.StatusCode != http.StatusAccepted {
 		t.Fatalf("deploy = %d %v", resp.StatusCode, dep)
 	}
-	if dep["applied"].(float64) != 3 {
-		t.Errorf("applied = %v, want 3", dep["applied"])
+	depID := dep["deployment"].(map[string]any)["id"].(string)
+
+	// Poll the deployment until the background job finishes.
+	var final map[string]any
+	for i := 0; i < 100; i++ {
+		_, got := h.do(http.MethodGet, "/api/v1/deployments/"+depID, token, nil)
+		if st, _ := got["status"].(string); st == "success" || st == "failed" {
+			final = got
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if final == nil {
+		t.Fatal("deployment did not finish in time")
+	}
+	if final["status"] != "success" {
+		t.Fatalf("deployment status = %v (error: %v), want success", final["status"], final["error"])
+	}
+	if final["applied"].(float64) != 3 {
+		t.Errorf("applied = %v, want 3", final["applied"])
 	}
 	// The engine must have received the compose unit's ISOLATED orcinus project
 	// (project slug + "-compose"), not the bare project slug.
@@ -87,11 +106,6 @@ func TestComposeDeployFlow(t *testing.T) {
 	}
 	if engine.lastSource != compose {
 		t.Errorf("engine source mismatch: %q", engine.lastSource)
-	}
-	// Deployment status recorded as success.
-	d := dep["deployment"].(map[string]any)
-	if d["status"] != "success" {
-		t.Errorf("deployment status = %v, want success", d["status"])
 	}
 
 	// Deployment history has one entry.

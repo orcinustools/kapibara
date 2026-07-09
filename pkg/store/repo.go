@@ -58,6 +58,15 @@ func (s *Store) CreateOrg(o *Organization) error { return s.DB.Create(o).Error }
 // CreateMembership links a user to an org with a role.
 func (s *Store) CreateMembership(m *Membership) error { return s.DB.Create(m).Error }
 
+// OrgByID looks up an organization by id.
+func (s *Store) OrgByID(id string) (*Organization, error) {
+	var o Organization
+	if err := s.DB.First(&o, "id = ?", id).Error; err != nil {
+		return nil, wrap(err)
+	}
+	return &o, nil
+}
+
 // OrgsForUser returns the organizations a user belongs to.
 func (s *Store) OrgsForUser(userID string) ([]Organization, error) {
 	var orgs []Organization

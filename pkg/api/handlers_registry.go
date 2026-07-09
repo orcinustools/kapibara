@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/orcinustools/kapibara/pkg/auth"
+	"github.com/orcinustools/kapibara/pkg/store"
 )
 
 // The registry gateway turns Kapibara's public HTTPS endpoint into a Docker
@@ -31,8 +32,11 @@ import (
 // Enabled only when KAPIBARA_REGISTRY_UPSTREAM is set.
 
 type regClaims struct {
-	Push bool  `json:"push"`
-	Exp  int64 `json:"exp"`
+	Push bool `json:"push"`
+	// Scope is the org slug used to namespace pushes: a request path under
+	// /v2/registry/<x> is rewritten to /v2/registry/<scope>/<x> (idempotent).
+	Scope string `json:"scope,omitempty"`
+	Exp   int64  `json:"exp"`
 }
 
 func (s *Server) registryHandler() http.Handler {
@@ -72,8 +76,32 @@ func (s *Server) registryHandler() http.Handler {
 			s.registryChallenge(w, r)
 			return
 		}
+		// Namespace the caller's repositories by their org: a path under
+		// /v2/registry/<x> becomes /v2/registry/<scope>/<x> (idempotent). Pulls
+		// carry the already-scoped path in the manifest, so only tokens that
+		// carry a scope (pushers) trigger the rewrite.
+		if claims.Scope != "" {
+			r.URL.Path = scopeRegistryPath(r.URL.Path, claims.Scope)
+		}
 		proxy.ServeHTTP(w, r)
 	})
+}
+
+// scopeRegistryPath inserts the org scope after "registry/" in a /v2 repository
+// path, unless it is already present. e.g.
+//
+//	/v2/registry/worker/api/manifests/1        → /v2/registry/<scope>/worker/api/manifests/1
+//	/v2/registry/<scope>/worker/api/blobs/...   → unchanged
+func scopeRegistryPath(path, scope string) string {
+	const pfx = "/v2/registry/"
+	if scope == "" || !strings.HasPrefix(path, pfx) {
+		return path
+	}
+	rest := strings.TrimPrefix(path, pfx)
+	if strings.HasPrefix(rest, scope+"/") {
+		return path // already scoped
+	}
+	return pfx + scope + "/" + rest
 }
 
 func registryIsWrite(method string) bool {
@@ -103,19 +131,26 @@ func (s *Server) registryToken(w http.ResponseWriter, r *http.Request) {
 	wantPush := strings.Contains(actions, "push") || strings.Contains(actions, "*")
 
 	authed := false
+	scope := ""
 	if email, secret, ok := r.BasicAuth(); ok && email != "" && secret != "" {
-		if !s.checkRegistryCreds(email, secret) {
+		u := s.registryUser(email, secret)
+		if u == nil {
 			w.Header().Set("WWW-Authenticate", `Basic realm="kapibara"`)
 			writeError(w, http.StatusUnauthorized, "invalid credentials")
 			return
 		}
 		authed = true
+		scope = s.registryScope(u) // org slug → namespaces this user's pushes
 	}
 	if wantPush && !authed {
 		s.registryChallenge(w, r)
 		return
 	}
-	tok := s.signRegistryToken(regClaims{Push: authed && wantPush, Exp: time.Now().Add(5 * time.Minute).Unix()})
+	claims := regClaims{Push: authed && wantPush, Exp: time.Now().Add(5 * time.Minute).Unix()}
+	if claims.Push {
+		claims.Scope = scope
+	}
+	tok := s.signRegistryToken(claims)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"token":        tok,
 		"access_token": tok,
@@ -123,18 +158,31 @@ func (s *Server) registryToken(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// checkRegistryCreds validates Docker Basic credentials against a Kapibara
-// account (password or a kap_ API token).
-func (s *Server) checkRegistryCreds(email, secret string) bool {
+// registryUser validates Docker Basic credentials against a Kapibara account
+// (password or a kap_ API token) and returns the user, or nil if invalid.
+func (s *Server) registryUser(email, secret string) *store.User {
 	if strings.HasPrefix(secret, "kap_") {
 		u, err := s.Store.UserByAPITokenHash(auth.HashToken(secret))
-		return err == nil && u != nil && strings.EqualFold(u.Email, email)
+		if err == nil && u != nil && strings.EqualFold(u.Email, email) {
+			return u
+		}
+		return nil
 	}
 	u, err := s.Store.UserByEmail(email)
-	if err != nil {
-		return false
+	if err != nil || !auth.CheckPassword(u.PasswordHash, secret) {
+		return nil
 	}
-	return auth.CheckPassword(u.PasswordHash, secret)
+	return u
+}
+
+// registryScope returns the org slug used to namespace a user's registry
+// pushes — their primary (first) organization.
+func (s *Server) registryScope(u *store.User) string {
+	orgs, err := s.Store.OrgsForUser(u.ID)
+	if err != nil || len(orgs) == 0 {
+		return ""
+	}
+	return orgs[0].Slug
 }
 
 // signRegistryToken returns a compact HMAC-signed token: base64(payload).base64(sig).
