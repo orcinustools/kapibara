@@ -68,29 +68,39 @@ without a host.
 
 ## Images & the registry (build → push → reference)
 
-Kapibara often runs **in-cluster**, where it **cannot build from Git** (a pod has
-no Docker). Build your image where Docker is available (your machine or CI) and
-push it to Kapibara's built-in registry gateway, then reference the short form:
+Kapibara runs **in-cluster** and **cannot build from Git** itself. Build the
+image where you are and push it to Kapibara's registry gateway with one CLI
+command (it handles the registry login), then reference the short
+`registry/<project>/<image>:<tag>` form in the manifest.
 
-```bash
-# Build (monorepos: context is the repo ROOT, pick the service Dockerfile)
-docker build -t <kapibara-host>/registry/<project>/<image>:<tag> -f path/to/Dockerfile .
+Two build modes:
 
-# Log in with your Kapibara account, then push (the gateway namespaces it by org)
-docker login <kapibara-host> -u you@example.com
-docker push <kapibara-host>/registry/<project>/<image>:<tag>
-```
+- **`kapibara image build`** — full Dockerfile, runs `RUN` steps. Needs Docker
+  on this machine. Monorepos: context is the repo root, `-f` picks the service
+  Dockerfile.
+  ```bash
+  kapibara image build --project worker --name api --tag v1 -f apps/api/Dockerfile .
+  ```
+- **`kapibara image pack`** — assemble a base image + a directory, in-process
+  (go-containerregistry), **no Docker**. For prebuilt artifacts: static sites,
+  Go binaries, compiled bundles (no `RUN`). Produces a `linux/amd64` image from
+  any host OS.
+  ```bash
+  kapibara image pack --project web --name site --tag v1 \
+    --base nginx:alpine --dir ./dist --dest /usr/share/nginx/html --port 80
+  ```
 
-In `orcinus.yml`, reference it **without the host**:
+Both push to the gateway and print the reference to use in `orcinus.yml`:
 
 ```yaml
     image: registry/<project>/<image>:<tag>
 ```
 
 Kapibara rewrites that at deploy time to the full, org-scoped pull path
-(`<kapibara-host>/registry/<org>/<project>/<image>:<tag>`) and the cluster pulls
-it back through the gateway — no pull secret needed. Get `<kapibara-host>` from
-`kapibara info` (registry host).
+(`<host>/registry/<org>/<project>/<image>:<tag>`) and the cluster pulls it back
+through the gateway — no pull secret needed. (Raw `docker push
+<host>/registry/...` also works if you can't use the CLI; `kapibara info` shows
+the host.)
 
 ## Reuse existing managed databases
 
