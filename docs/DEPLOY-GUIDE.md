@@ -63,23 +63,21 @@ references such keys by listing them under `x-orcinus-secret` (see §5).
 
 Supported engines: `postgres`, `mysql`, `mariadb`, `mongo`, `redis`.
 
-Databases are created and deployed via the API (the web UI does this too; the
-CLI focuses on compose/app deploys). Using the REST API directly:
+Create + deploy from the CLI (also available in the web UI and REST API):
 
 ```bash
-# create a project
-curl -sX POST $API/orgs/$ORG/projects -H "$AUTH" -d '{"name":"demo"}'
+# create + provision in one step
+kapibara db create --project demo --name pg    --engine postgres --deploy
+kapibara db create --project demo --name cache --engine redis    --deploy
 
-# create + deploy Postgres
-curl -sX POST $API/projects/$PID/databases -H "$AUTH" \
-  -d '{"name":"pg","engine":"postgres"}'                 # → returns db id
-curl -sX POST $API/databases/$PGID/deploy -H "$AUTH"     # waits for ready
-
-# create + deploy Redis
-curl -sX POST $API/projects/$PID/databases -H "$AUTH" \
-  -d '{"name":"cache","engine":"redis"}'
-curl -sX POST $API/databases/$RDID/deploy -H "$AUTH"
+kapibara db list --project demo      # id, name, engine, host:port
+kapibara db info <dbID>              # connection string + credentials
+kapibara db rm   <dbID>              # delete
 ```
+
+`create` flags: `--version`, `--username`, `--password`, `--dbname`,
+`--volume-size` (all optional; sensible defaults). Omit `--deploy` to create
+without provisioning, then `kapibara db deploy <dbID>` later.
 
 Each database is provisioned as a **StatefulSet + PVC + ClusterIP Service**. The
 Service gives the database its in-cluster DNS name, equal to the database name:
