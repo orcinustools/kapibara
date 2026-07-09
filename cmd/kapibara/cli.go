@@ -138,6 +138,7 @@ func cliCommands() []*cobra.Command {
 		projectsCmd(),
 		deployCmd(),
 		appCmd(),
+		databaseCmd(),
 		deploymentCmd(),
 		secretCmd(),
 	}

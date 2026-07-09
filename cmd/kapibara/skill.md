@@ -96,6 +96,34 @@ volumes:
   db-data:
 ```
 
+## One-click databases (CLI)
+
+For stateful dependencies, prefer Kapibara's managed databases over hand-writing
+a DB service — they set up the StatefulSet + PVC + Service correctly:
+
+```bash
+kapibara db create --project <p> --name pg    --engine postgres --deploy
+kapibara db create --project <p> --name cache --engine redis    --deploy
+kapibara db list --project <p>     # id · name · engine · host:port
+kapibara db info <dbID>            # connection string + credentials
+```
+
+Engines: `postgres | mysql | mariadb | mongo | redis`. Optional create flags:
+`--version --username --password --dbname --volume-size` (sensible defaults).
+
+Wire the app to them via env — the **host is the database name** (`pg`, `cache`):
+
+```bash
+kapibara app deploy --project <p> --name api --build image --image <img> \
+  --port 8080 --domain api.apps.example.com --tls \
+  --env DATABASE_URL='postgres://kapibara:<pass>@pg:5432/app' \
+  --env REDIS_URL='redis://cache:6379' \
+  --secret DATABASE_URL
+```
+
+Get the exact `DATABASE_URL` from `kapibara db info <dbID>` (its
+`connection:` line). Use `--secret <KEY>` to store credentials as a Secret.
+
 ## Deploy checklist
 
 - [ ] Every reachable service has `ports:`.
