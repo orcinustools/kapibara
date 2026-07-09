@@ -22,6 +22,9 @@ type cliConfig struct {
 	Token  string `json:"token"`
 	OrgID  string `json:"orgId"`
 	Email  string `json:"email"`
+	// RegistryToken is a cached kap_ API token used as the Docker password when
+	// pushing to the registry gateway (minted on first `image build`).
+	RegistryToken string `json:"registryToken,omitempty"`
 }
 
 func cliConfigPath() string {
@@ -55,6 +58,7 @@ func loadCLIConfig() cliConfig {
 			}
 			c.OrgID = f.OrgID
 			c.Email = f.Email
+			c.RegistryToken = f.RegistryToken
 		}
 	}
 	if c.Server == "" {
@@ -138,6 +142,7 @@ func cliCommands() []*cobra.Command {
 		infoCmd(),
 		projectsCmd(),
 		deployCmd(),
+		imageCmd(),
 		appCmd(),
 		databaseCmd(),
 		deploymentCmd(),
