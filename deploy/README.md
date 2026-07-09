@@ -64,7 +64,23 @@ metrics; this binds that access to the namespace's `default` ServiceAccount.
 
 ---
 
-## 4. Configure & deploy
+## 4. (Optional) Enable the built-in Docker registry gateway
+
+Kapibara can front an in-cluster registry so users push images to
+`https://kapibara.example.com/registry/<project>/<image>` (authenticated) and the
+cluster pulls them back — no external registry needed. Install the plugin:
+
+```bash
+orcinus plugin install registry     # registry:2 at registry.orcinus-registry.svc:5000
+```
+
+Then set in `kapibara.compose.yml`:
+`KAPIBARA_REGISTRY_UPSTREAM=http://registry.orcinus-registry.svc:5000` and
+`KAPIBARA_REGISTRY_PUBLIC=kapibara.example.com`. Users build & push with
+`kapibara image build` (Docker) or `kapibara image pack` (no Docker), and
+reference `image: registry/<project>/<image>:<tag>` in a deploy.
+
+## 5. Configure & deploy
 
 Edit `kapibara.compose.yml`:
 
@@ -74,6 +90,9 @@ Edit `kapibara.compose.yml`:
   orcinus engine API (an in-cluster Service, or the node/host IP:8899)
 - `KAPIBARA_ACME_EMAIL` → your email
 - `KAPIBARA_JWT_SECRET` → `openssl rand -hex 32`
+- `KAPIBARA_PUBLIC_URL` → `https://kapibara.example.com`
+- `KAPIBARA_APPS_DOMAIN` → `apps.example.com` (base host for deployed apps)
+- `KAPIBARA_REGISTRY_UPSTREAM` / `KAPIBARA_REGISTRY_PUBLIC` → see step 4
 
 Deploy it through orcinus:
 
@@ -86,7 +105,7 @@ for the marked env keys).
 
 ---
 
-## 5. Verify
+## 6. Verify
 
 ```bash
 orcinus ps kapibara                       # pod Running
@@ -102,10 +121,11 @@ apps and databases.
 
 ## Notes
 
-- **Git builds from an in-cluster control-plane:** building images from Git needs
-  Docker on the host running Kapibara. A pod has no Docker, so set
-  `KAPIBARA_REGISTRY` and run builds where Docker is available, or use the
-  prebuilt-image / compose deploy paths from inside the cluster. Image, compose,
-  and one-click database deploys work fully in-cluster.
+- **Building images (in-cluster Kapibara can't build from Git):** build where
+  you are and push to the registry gateway (step 4). `kapibara image build` uses
+  local Docker for full Dockerfiles; `kapibara image pack` assembles a base +
+  files in-process with **no Docker** (great for static sites / Go binaries, and
+  builds `linux/amd64` from any host). Then reference `registry/<project>/<image>`.
+  Image, compose, and one-click database deploys all work fully in-cluster.
 - **Namespace:** the manifests assume `default`. If you deploy elsewhere, set
   `KAPIBARA_NAMESPACE` and update the subject namespace in `rbac.yaml`.

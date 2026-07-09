@@ -5,9 +5,12 @@
 #
 # Before deploying:
 #   1. Build & push the image (see deploy/README.md) and set `image:` below.
-#   2. Replace kapibara.example.com with your host (wildcard/A record → cluster).
+#   2. Replace kapibara.example.com with your host (wildcard/A record → cluster);
+#      also point *.apps.example.com at the cluster for deployed apps.
 #   3. Fill KAPIBARA_ORCINUS_URL / _TOKEN, and set strong JWT + ACME email.
 #   4. Apply deploy/rbac.yaml so the pod may read pod logs + metrics.
+#   5. For the built-in Docker registry gateway: install the orcinus `registry`
+#      plugin (`orcinus plugin install registry`) and set the registry env below.
 services:
   kapibara:
     image: ghcr.io/orcinustools/kapibara:latest
@@ -29,6 +32,17 @@ services:
       KAPIBARA_ACME_EMAIL: "you@example.com"
       # Signs sessions/API tokens — generate with `openssl rand -hex 32`.
       KAPIBARA_JWT_SECRET: "replace-with-a-long-random-secret"
+      # Public base URL (OAuth redirects, registry token realm). Your host.
+      KAPIBARA_PUBLIC_URL: "https://kapibara.example.com"
+      # Base wildcard domain for deployed apps → <app>.apps.example.com. Exposed
+      # via `kapibara info` / GET /config so the UI/CLI/agents derive app hosts.
+      KAPIBARA_APPS_DOMAIN: "apps.example.com"
+      # --- Built-in Docker registry gateway (needs the orcinus `registry` plugin) ---
+      # Upstream in-cluster registry the /v2 gateway proxies to (registry:5000).
+      KAPIBARA_REGISTRY_UPSTREAM: "http://registry.orcinus-registry.svc:5000"
+      # Public host of the gateway (usually this same server's host). App images
+      # written as registry/<project>/<image> are rewritten to pull from here.
+      KAPIBARA_REGISTRY_PUBLIC: "kapibara.example.com"
       # Persist the SQLite store + build cache on the mounted volume.
       KAPIBARA_DATA_DIR: "/data"
       KAPIBARA_DATABASE_URL: "/data/kapibara.db"
