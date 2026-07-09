@@ -20,7 +20,7 @@ import (
 // it (railpack/Dockerfile) in-cluster and deploy it — no Docker or Git on the
 // client. It is the local-source counterpart to `app deploy --repo`.
 func upCmd() *cobra.Command {
-	var project, name, buildType, path, contextDir, dockerfile, domain string
+	var project, name, buildType, path, contextDir, dockerfile, domain, envFile string
 	var cpuLimit, memoryLimit, volumeSize string
 	var mounts, envPairs, secretKeys, command []string
 	var port int
@@ -60,13 +60,21 @@ func upCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			env := map[string]string{}
-			for _, e := range envPairs {
-				k, v, ok := strings.Cut(e, "=")
-				if !ok {
-					return fmt.Errorf("invalid --env %q (want KEY=VALUE)", e)
-				}
-				env[k] = v
+			env, err := mergeEnv(envFile, envPairs)
+			if err != nil {
+				return err
+			}
+			// Keep it simple: default the port to 3000 and expose it as $PORT so
+			// the app binds where Kapibara routes traffic.
+			if port == 0 {
+				port = 3000
+			}
+			if _, ok := env["PORT"]; !ok {
+				env["PORT"] = fmt.Sprintf("%d", port)
+			}
+			// Default the public host to <name>.<appsDomain> (with TLS) when unset.
+			if domain, tls = autoDomain(cmd.Context(), client, name, domain, tls); domain != "" {
+				fmt.Printf("domain: https://%s\n", domain)
 			}
 			app, err := ensureApp(cmd.Context(), client, p.ID, appSpec{
 				Name: name, BuildType: buildType, // no RepoURL: source is uploaded
@@ -129,7 +137,7 @@ func upCmd() *cobra.Command {
 	cmd.Flags().StringVar(&path, "path", ".", "local directory to upload as the build context")
 	cmd.Flags().StringVar(&contextDir, "context-dir", "", "build context subdirectory (monorepos)")
 	cmd.Flags().StringVar(&dockerfile, "dockerfile", "", "path to Dockerfile (relative to the context dir)")
-	cmd.Flags().IntVar(&port, "port", 0, "container port to expose")
+	cmd.Flags().IntVar(&port, "port", 0, "container port to expose (default 3000, also set as $PORT)")
 	cmd.Flags().StringVar(&domain, "domain", "", "ingress host/domain")
 	cmd.Flags().BoolVar(&tls, "tls", false, "enable TLS (cert-manager) for the domain")
 	cmd.Flags().StringVar(&cpuLimit, "cpu-limit", "", "CPU limit in cores, e.g. 0.5")
@@ -137,6 +145,7 @@ func upCmd() *cobra.Command {
 	cmd.Flags().StringArrayVar(&mounts, "mount", nil, "persistent volume mount name:path (repeatable)")
 	cmd.Flags().StringVar(&volumeSize, "volume-size", "", "PVC size for mounts, e.g. 1Gi")
 	cmd.Flags().StringArrayVar(&envPairs, "env", nil, "environment variable KEY=VALUE (repeatable)")
+	cmd.Flags().StringVar(&envFile, "env-file", "", "load env vars from a .env file (KEY=VALUE per line); --env overrides")
 	cmd.Flags().StringArrayVar(&secretKeys, "secret", nil, "mark an --env key as a cluster Secret (repeatable)")
 	cmd.Flags().StringArrayVar(&command, "command", nil, "override the container command (repeatable, in order)")
 	cmd.Flags().BoolVar(&follow, "follow", true, "stream deployment status/logs until it finishes")
