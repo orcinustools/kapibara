@@ -135,6 +135,7 @@ func (a *apiClient) do(ctx context.Context, method, path string, body, out any) 
 func cliCommands() []*cobra.Command {
 	return []*cobra.Command{
 		loginCmd(),
+		infoCmd(),
 		projectsCmd(),
 		deployCmd(),
 		appCmd(),

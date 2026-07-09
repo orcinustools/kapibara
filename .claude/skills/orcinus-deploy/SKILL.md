@@ -20,6 +20,21 @@ hints that orcinus converts to Kubernetes objects — then deploy it.
    ```
    Or via Kapibara compose: `kapibara deploy --project <name> -f orcinus.yml`.
 
+## Default app domain
+
+If the user does not specify a host, derive one from the server's base apps
+domain: **`<app-name>.<appsDomain>`**. Discover `appsDomain` (and the registry
+host) with:
+
+```bash
+kapibara info      # apps domain: apps.example.com  → apps at <app>.apps.example.com
+```
+
+Example: app `api` on a server whose apps domain is `apps.example.com` →
+`x-orcinus-host: api.apps.example.com` (or `--domain api.apps.example.com`). Only
+expose (ingress + host + TLS) services meant to be public; leave internal
+services without a host.
+
 ## Rules that matter
 
 - One `services:` entry per container. Standard compose keys work: `image`,

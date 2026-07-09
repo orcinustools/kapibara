@@ -53,6 +53,11 @@ type Config struct {
 	// used to build OAuth redirect URIs (e.g. https://paas.example.com). Falls
 	// back to the request host when empty.
 	PublicURL string
+	// AppsDomain is the base wildcard domain deployed apps live under, e.g.
+	// "apps.example.com" (a wildcard *.apps.example.com → the cluster). Agents,
+	// the UI, and the CLI use it to derive "<app>.<AppsDomain>" when the user
+	// doesn't specify a host. Stored without any leading "*." or ".".
+	AppsDomain string
 	// Git provider OAuth app credentials (optional; enables the OAuth connect
 	// flow — PAT connect works without them).
 	GitHubClientID     string
@@ -82,6 +87,7 @@ func Load() Config {
 		RegistryPublic:   os.Getenv("KAPIBARA_REGISTRY_PUBLIC"),
 
 		PublicURL:          strings.TrimRight(os.Getenv("KAPIBARA_PUBLIC_URL"), "/"),
+		AppsDomain:         strings.Trim(strings.TrimPrefix(strings.TrimSpace(os.Getenv("KAPIBARA_APPS_DOMAIN")), "*."), "."),
 		GitHubClientID:     os.Getenv("KAPIBARA_GITHUB_CLIENT_ID"),
 		GitHubClientSecret: os.Getenv("KAPIBARA_GITHUB_CLIENT_SECRET"),
 		GitLabClientID:     os.Getenv("KAPIBARA_GITLAB_CLIENT_ID"),

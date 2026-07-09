@@ -110,6 +110,7 @@ func (s *Server) routes() {
 
 			r.Get("/cluster", s.handleCluster)
 			r.Get("/engine/version", s.handleEngineVersion)
+			r.Get("/config", s.handleConfig)
 
 			// Organizations.
 			r.Get("/orgs", s.handleListOrgs)
@@ -217,6 +218,17 @@ func (s *Server) handleVersion(w http.ResponseWriter, r *http.Request) {
 		"version":   version.Version,
 		"gitCommit": version.GitCommit,
 		"component": "kapibara",
+	})
+}
+
+// handleConfig exposes deploy-relevant server settings so the UI, CLI, and AI
+// agents can discover where apps are hosted (appsDomain) and where to push
+// images (registryHost) without the user spelling it out.
+func (s *Server) handleConfig(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]any{
+		"appsDomain":   s.Cfg.AppsDomain,     // e.g. apps.example.com → <app>.apps.example.com
+		"registryHost": s.Cfg.RegistryPublic, // docker push <host>/<scope>/<name>
+		"publicUrl":    s.Cfg.PublicURL,
 	})
 }
 
