@@ -492,7 +492,7 @@ function Applications({ projectId, initialBuild = "image" }: { projectId: string
   const [apps, setApps] = useState<any[]>([]);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState("");
-  const [form, setForm] = useState<any>({ name: "", buildType: initialBuild, image: "", repoUrl: "", branch: "main", gitProviderId: "", port: 80, domain: "", tls: false, autoscaleMin: "", autoscaleMax: "", autoscaleCpu: "", autoscaleMemory: "", rollout: "" });
+  const [form, setForm] = useState<any>({ name: "", buildType: initialBuild, image: "", repoUrl: "", branch: "main", contextDir: "", dockerfilePath: "", envText: "", gitProviderId: "", port: 80, domain: "", tls: false, autoscaleMin: "", autoscaleMax: "", autoscaleCpu: "", autoscaleMemory: "", rollout: "" });
   // Git provider connect + repo picker (M3). Providers are org-scoped, so we
   // resolve the project's org first, then offer its connected providers; picking
   // a repo fills repoUrl/branch and links the provider so its token is injected
@@ -545,13 +545,23 @@ function Applications({ projectId, initialBuild = "image" }: { projectId: string
   async function create() {
     setErr(null);
     try {
+      // Parse the "KEY=VALUE per line" env box into an env map.
+      const env: Record<string, string> = {};
+      for (const line of String(form.envText || "").split("\n")) {
+        const t = line.trim();
+        if (!t || t.startsWith("#")) continue;
+        const i = t.indexOf("=");
+        if (i > 0) env[t.slice(0, i).trim()] = t.slice(i + 1);
+      }
+      const { envText, ...rest } = form;
       await api.post(`/projects/${projectId}/apps`, {
-        ...form,
+        ...rest,
         port: Number(form.port) || 0,
         autoscaleMin: Number(form.autoscaleMin) || 0,
         autoscaleMax: Number(form.autoscaleMax) || 0,
         autoscaleCpu: Number(form.autoscaleCpu) || 0,
         autoscaleMemory: Number(form.autoscaleMemory) || 0,
+        ...(Object.keys(env).length ? { env } : {}),
       });
       toast.success(`Created ${form.name}`);
       setForm({ ...form, name: "" });
@@ -758,6 +768,10 @@ function Applications({ projectId, initialBuild = "image" }: { projectId: string
                 <Input value={form.repoUrl} onChange={(e) => setForm({ ...form, repoUrl: e.target.value, gitProviderId: form.gitProviderId })} placeholder="https://github.com/user/repo" />
                 <Label>Branch</Label>
                 <Input value={form.branch} onChange={(e) => setForm({ ...form, branch: e.target.value })} />
+                <Label>Context dir (subfolder, optional)</Label>
+                <Input value={form.contextDir} onChange={(e) => setForm({ ...form, contextDir: e.target.value })} placeholder="apps/backend (monorepos)" />
+                <Label>Dockerfile path (optional)</Label>
+                <Input value={form.dockerfilePath} onChange={(e) => setForm({ ...form, dockerfilePath: e.target.value })} placeholder="Dockerfile (relative to context dir)" />
               </>
             )}
           </div>
@@ -770,6 +784,14 @@ function Applications({ projectId, initialBuild = "image" }: { projectId: string
               <Checkbox checked={form.tls} onCheckedChange={(v) => setForm({ ...form, tls: v === true })} />
               <span>Enable TLS (cert-manager / ACME)</span>
             </label>
+            <Label className="mt-3">Environment variables</Label>
+            <textarea
+              value={form.envText}
+              onChange={(e) => setForm({ ...form, envText: e.target.value })}
+              placeholder={"KEY=VALUE per line\nDATABASE_URL=postgres://…@db:5432/app"}
+              rows={4}
+              className="w-full rounded-md border border-input bg-background px-3 py-2 font-mono text-xs"
+            />
           </div>
         </div>
         <div className="mt-5 border-t border-border pt-4">
