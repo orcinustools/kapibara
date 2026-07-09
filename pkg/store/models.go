@@ -103,6 +103,11 @@ type Application struct {
 	GitProviderID  string `gorm:"index;size:36" json:"gitProviderId"`
 	ContextDir     string `gorm:"size:512" json:"contextDir"`
 	DockerfilePath string `gorm:"size:512" json:"dockerfilePath"`
+	// SourceArchive is a server-local path to an uploaded build context
+	// (tar.gz) from `kapibara up`. When set, the deployer builds from it
+	// instead of cloning RepoURL — the client uploads local source and the
+	// server builds it (no Git, no Docker on the client).
+	SourceArchive string `gorm:"size:512" json:"-"`
 
 	// Prebuilt image (for build type "image").
 	Image string `gorm:"size:512" json:"image"`

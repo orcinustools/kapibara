@@ -49,6 +49,22 @@ type Config struct {
 	// reference a short name and the cluster pulls it back through the gateway.
 	RegistryPublic string
 
+	// InClusterBuild enables server-side, Docker-less Git builds: the
+	// control-plane clones the repo, builds it with buildctl against BuildkitAddr
+	// (railpack/Dockerfile frontends), and pushes the image to the in-cluster
+	// registry — the cluster then pulls it back through the public gateway. No
+	// Docker daemon on the control-plane is required.
+	InClusterBuild bool
+	// BuildkitAddr is the BuildKit daemon buildctl talks to, e.g.
+	// tcp://buildkitd.orcinus-build.svc:1234.
+	BuildkitAddr string
+	// BuildPlatform is the target platform for in-cluster builds (default
+	// linux/amd64), so images match the cluster regardless of build host arch.
+	BuildPlatform string
+	// RailpackFrontend is the railpack BuildKit frontend image (pinned to the
+	// railpack version bundled in this image).
+	RailpackFrontend string
+
 	// PublicURL is the externally reachable base URL of this kapibara server,
 	// used to build OAuth redirect URIs (e.g. https://paas.example.com). Falls
 	// back to the request host when empty.
@@ -85,6 +101,11 @@ func Load() Config {
 		ClusterContainer: env("KAPIBARA_CLUSTER_CONTAINER", "orcinus"),
 		RegistryUpstream: os.Getenv("KAPIBARA_REGISTRY_UPSTREAM"),
 		RegistryPublic:   os.Getenv("KAPIBARA_REGISTRY_PUBLIC"),
+
+		InClusterBuild:   os.Getenv("KAPIBARA_INCLUSTER_BUILD") == "1" || os.Getenv("KAPIBARA_INCLUSTER_BUILD") == "true",
+		BuildkitAddr:     os.Getenv("KAPIBARA_BUILDKIT_ADDR"),
+		BuildPlatform:    env("KAPIBARA_BUILD_PLATFORM", "linux/amd64"),
+		RailpackFrontend: env("KAPIBARA_RAILPACK_FRONTEND", "ghcr.io/railwayapp/railpack-frontend"),
 
 		PublicURL:          strings.TrimRight(os.Getenv("KAPIBARA_PUBLIC_URL"), "/"),
 		AppsDomain:         strings.Trim(strings.TrimPrefix(strings.TrimSpace(os.Getenv("KAPIBARA_APPS_DOMAIN")), "*."), "."),

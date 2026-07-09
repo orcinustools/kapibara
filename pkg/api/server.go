@@ -55,6 +55,11 @@ func New(cfg config.Config, st *store.Store) *Server {
 			ClusterContainer: cfg.ClusterContainer,
 			DataDir:          cfg.DataDir,
 			RegistryPublic:   cfg.RegistryPublic,
+			InClusterBuild:   cfg.InClusterBuild,
+			BuildkitAddr:     cfg.BuildkitAddr,
+			BuildPlatform:    cfg.BuildPlatform,
+			RailpackFrontend: cfg.RailpackFrontend,
+			RegistryUpstream: cfg.RegistryUpstream,
 		}),
 	}
 	// Wire deploy notifications through the org's configured channels.
@@ -153,6 +158,7 @@ func (s *Server) routes() {
 			r.Put("/apps/{appID}", s.handleUpdateApp)
 			r.Delete("/apps/{appID}", s.handleDeleteApp)
 			r.Post("/apps/{appID}/deploy", s.handleDeployApp)
+			r.Post("/apps/{appID}/source", s.handleUploadAppSource)
 			r.Get("/deployments/{deploymentID}", s.handleGetDeployment)
 			r.Post("/deployments/{deploymentID}/redeploy", s.handleRedeployDeployment)
 

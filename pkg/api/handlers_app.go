@@ -11,7 +11,7 @@ import (
 
 type appReq struct {
 	Name           string            `json:"name"`
-	BuildType      string            `json:"buildType"` // dockerfile | nixpacks | image
+	BuildType      string            `json:"buildType"` // dockerfile | nixpacks | railpack | image
 	RepoURL        string            `json:"repoUrl"`
 	Branch         string            `json:"branch"`
 	GitProviderID  string            `json:"gitProviderId"`
@@ -72,11 +72,10 @@ func (s *Server) handleCreateApp(w http.ResponseWriter, r *http.Request) {
 		req.BuildType = "dockerfile"
 	}
 	switch req.BuildType {
-	case "dockerfile", "nixpacks":
-		if req.RepoURL == "" {
-			writeError(w, http.StatusBadRequest, "repoUrl required for git builds")
-			return
-		}
+	case "dockerfile", "nixpacks", "railpack":
+		// No repoUrl required: the source may be uploaded via `kapibara up`
+		// (POST /apps/{id}/source). The deployer enforces "a source exists"
+		// (repo or uploaded archive) at deploy time.
 	case "image":
 		if req.Image == "" {
 			writeError(w, http.StatusBadRequest, "image required for build type image")

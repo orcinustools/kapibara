@@ -68,9 +68,13 @@ without a host.
 
 ## Images & the registry (build → push → reference)
 
-Kapibara runs **in-cluster** and **cannot build from Git** itself. Build the
-image where you are and push it to Kapibara's registry gateway with one CLI
-command (it handles the registry login), then reference the short
+If the server has **in-cluster builds** enabled (a BuildKit daemon +
+`KAPIBARA_INCLUSTER_BUILD=1`), Kapibara builds from Git itself — no Docker
+anywhere: `kapibara deploy --build railpack|dockerfile --repo <git-url>` clones,
+builds server-side, pushes to the registry, and deploys. Otherwise (default),
+Kapibara runs **in-cluster** and **cannot build from Git**: build the image
+where you are and push it to Kapibara's registry gateway with one CLI command
+(it handles the registry login), then reference the short
 `registry/<project>/<image>:<tag>` form in the manifest.
 
 Two build modes:

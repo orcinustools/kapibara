@@ -43,6 +43,17 @@ services:
       # Public host of the gateway (usually this same server's host). App images
       # written as registry/<project>/<image> are rewritten to pull from here.
       KAPIBARA_REGISTRY_PUBLIC: "kapibara.example.com"
+      # --- Server-side, Docker-less Git builds ---
+      # Build from Git in-cluster: clone → railpack/Dockerfile → buildctl builds
+      # against BuildKit and pushes to the in-cluster registry; the cluster pulls
+      # it back through the gateway above. Deploy the daemon FIRST, or git builds
+      # fail (image/compose/db deploys work regardless):
+      #   orcinus kubectl apply -f deploy/buildkitd.yaml
+      KAPIBARA_INCLUSTER_BUILD: "1"
+      KAPIBARA_BUILDKIT_ADDR: "tcp://buildkitd.orcinus-build.svc:1234"
+      # Pin the railpack frontend to the railpack version bundled in the image.
+      KAPIBARA_RAILPACK_FRONTEND: "ghcr.io/railwayapp/railpack-frontend:v0.30.0"
+      KAPIBARA_BUILD_PLATFORM: "linux/amd64"
       # Persist the SQLite store + build cache on the mounted volume.
       KAPIBARA_DATA_DIR: "/data"
       KAPIBARA_DATABASE_URL: "/data/kapibara.db"

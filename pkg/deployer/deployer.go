@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
@@ -31,6 +32,20 @@ type Config struct {
 	// "<RegistryPublic>/<path>" at deploy so the cluster pulls them from the
 	// registry gateway (e.g. kapibara.mayar.io).
 	RegistryPublic string
+
+	// InClusterBuild builds Git sources server-side with buildctl + BuildKit
+	// (no Docker) and pushes to the in-cluster registry; the cluster then pulls
+	// the image back through the public gateway.
+	InClusterBuild bool
+	// BuildkitAddr is the BuildKit daemon buildctl connects to.
+	BuildkitAddr string
+	// BuildPlatform is the target platform for in-cluster builds (linux/amd64).
+	BuildPlatform string
+	// RailpackFrontend is the railpack BuildKit frontend image.
+	RailpackFrontend string
+	// RegistryUpstream is the in-cluster registry buildkit pushes to over HTTP
+	// (e.g. http://registry.orcinus-registry.svc:5000).
+	RegistryUpstream string
 }
 
 // Deployer runs application deployments.
@@ -129,6 +144,10 @@ func (d *Deployer) run(ctx context.Context, app *store.Application, project *sto
 
 	// 1. Fetch source (unless a prebuilt image).
 	if build.Type(app.BuildType) != build.Image {
+		if app.SourceArchive == "" && app.RepoURL == "" {
+			fail(fmt.Errorf("no source to build: set a git repo (--repo) or upload local source with `kapibara up`"))
+			return
+		}
 		dir, err := os.MkdirTemp(d.Cfg.DataDir, "build-*")
 		if err != nil {
 			fail(err)
@@ -136,22 +155,36 @@ func (d *Deployer) run(ctx context.Context, app *store.Application, project *sto
 		}
 		defer os.RemoveAll(dir)
 
-		fmt.Fprintf(sink, "cloning %s (%s)\n", app.RepoURL, app.Branch)
-		// Inject the connected git provider's token for private repos. The
-		// token is redacted from clone output by pkg/git.
-		token := ""
-		if app.GitProviderID != "" {
-			if gp, err := d.Store.GitProviderByID(app.GitProviderID); err == nil {
-				token = gp.Token
+		var sha string
+		if app.SourceArchive != "" {
+			// Uploaded local context (`kapibara up`): extract the tarball instead
+			// of cloning. The image tag is a content hash of the archive.
+			fmt.Fprintf(sink, "extracting uploaded source (%s)\n", filepath.Base(app.SourceArchive))
+			h, err := extractTarGz(app.SourceArchive, dir+"/src")
+			if err != nil {
+				fail(fmt.Errorf("extract uploaded source: %w", err))
+				return
 			}
-		}
-		sha, out, err := git.Clone(ctx, git.CloneOptions{
-			RepoURL: app.RepoURL, Ref: app.Branch, Dir: dir + "/src", Token: token,
-		})
-		sink.Write([]byte(out))
-		if err != nil {
-			fail(err)
-			return
+			sha = h
+		} else {
+			fmt.Fprintf(sink, "cloning %s (%s)\n", app.RepoURL, app.Branch)
+			// Inject the connected git provider's token for private repos. The
+			// token is redacted from clone output by pkg/git.
+			token := ""
+			if app.GitProviderID != "" {
+				if gp, err := d.Store.GitProviderByID(app.GitProviderID); err == nil {
+					token = gp.Token
+				}
+			}
+			s, out, err := git.Clone(ctx, git.CloneOptions{
+				RepoURL: app.RepoURL, Ref: app.Branch, Dir: dir + "/src", Token: token,
+			})
+			sink.Write([]byte(out))
+			if err != nil {
+				fail(err)
+				return
+			}
+			sha = s
 		}
 		dep.CommitSHA = sha
 		contextDir = dir + "/src"
@@ -161,18 +194,38 @@ func (d *Deployer) run(ctx context.Context, app *store.Application, project *sto
 		imageRef = d.imageRef(project, app, sha)
 	}
 
-	dep.ImageRef = imageRef
-	_ = d.Store.UpdateDeployment(dep)
-
 	// 2. Build + publish (skipped for prebuilt images).
 	builder := &build.Builder{ClusterContainer: d.Cfg.ClusterContainer, Push: d.Cfg.Push}
-	if err := builder.Build(ctx, build.Request{
+	req := build.Request{
 		Type:       build.Type(app.BuildType),
 		ContextDir: contextDir,
 		Dockerfile: app.DockerfilePath,
 		ImageRef:   imageRef,
 		Log:        sink,
-	}); err != nil {
+	}
+	// Server-side, Docker-less build: buildkit pushes to the in-cluster registry
+	// and the cluster pulls the image back through the public gateway. The push
+	// target (internal registry host) and the pull reference (gateway host) share
+	// the same org-scoped repository path.
+	if d.Cfg.InClusterBuild && build.Type(app.BuildType) != build.Image {
+		builder.Frontend = true
+		builder.BuildkitAddr = d.Cfg.BuildkitAddr
+		builder.Platform = d.Cfg.BuildPlatform
+		builder.RailpackFrontend = d.Cfg.RailpackFrontend
+		repo := d.registryRepo(project, app, dep.CommitSHA) // registry/<scope>/kapibara/<proj>-<app>:<tag>
+		if host := registryHost(d.Cfg.RegistryUpstream); host != "" {
+			req.PushImage = host + "/" + repo
+		}
+		if d.Cfg.RegistryPublic != "" {
+			imageRef = strings.TrimRight(d.Cfg.RegistryPublic, "/") + "/" + repo
+			req.ImageRef = imageRef
+		}
+	}
+
+	dep.ImageRef = imageRef
+	_ = d.Store.UpdateDeployment(dep)
+
+	if err := builder.Build(ctx, req); err != nil {
 		fail(err)
 		return
 	}
@@ -189,10 +242,14 @@ func (d *Deployer) run(ctx context.Context, app *store.Application, project *sto
 	target := targetProject(app, project)
 	fmt.Fprintf(sink, "\ndeploying to cluster as project %q\n", target)
 	acme := os.Getenv("KAPIBARA_ACME_EMAIL")
+	// Apply without blocking on readiness: orcinus returns as soon as the
+	// objects are applied. Waiting made this POST exceed the client timeout for
+	// slower workloads (image pull, migrations). The rollout continues in the
+	// cluster; follow it with `kapibara deployment status` / `orcinus ps`.
 	res, err := d.Orcinus.Deploy(ctx, orcinus.DeployRequest{
 		Source:    source,
 		Project:   target,
-		Wait:      true,
+		Wait:      false,
 		ACMEEmail: acme,
 	})
 	if err != nil {
@@ -200,6 +257,7 @@ func (d *Deployer) run(ctx context.Context, app *store.Application, project *sto
 		return
 	}
 
+	fmt.Fprintf(sink, "applied %d object(s); rollout continues in the cluster\n", res.Applied)
 	sink.flush()
 	dep.Status = store.DeploySuccess
 	dep.Applied = res.Applied
@@ -213,7 +271,7 @@ func (d *Deployer) run(ctx context.Context, app *store.Application, project *sto
 	_ = d.Store.UpdateApplication(app)
 
 	d.notify(ctx, project, true, "Deployed "+app.Name,
-		fmt.Sprintf("%d objects applied (image %s)", res.Applied, imageRef))
+		fmt.Sprintf("%d objects applied (image %s); rollout in progress", res.Applied, imageRef))
 }
 
 // composeFor renders a single-service compose file from an application.
@@ -300,6 +358,33 @@ func (d *Deployer) imageRef(project *store.Project, app *store.Application, sha 
 		name = strings.TrimRight(d.Cfg.RegistryPrefix, "/") + "/" + name
 	}
 	return name + ":" + tag
+}
+
+// registryRepo returns the org-scoped repository path (no host) used for
+// in-cluster builds: "registry/<scope>/kapibara/<orcinusProject>-<app>:<tag>".
+// The buildkit push target and the gateway pull reference share this path, so
+// what buildkit pushes to the in-cluster registry is exactly what the cluster
+// pulls back through the public gateway.
+func (d *Deployer) registryRepo(project *store.Project, app *store.Application, sha string) string {
+	tag := "latest"
+	if len(sha) >= 12 {
+		tag = sha[:12]
+	}
+	name := fmt.Sprintf("kapibara/%s-%s", project.OrcinusProject, sanitize(app.Name))
+	repo := "registry/" + name
+	if scope := d.orgScope(project); scope != "" {
+		repo = "registry/" + scope + "/" + name
+	}
+	return repo + ":" + tag
+}
+
+// registryHost strips the scheme from a registry upstream URL, yielding the
+// host[:port] buildkit pushes to (e.g. registry.orcinus-registry.svc:5000).
+func registryHost(upstream string) string {
+	u := strings.TrimSpace(upstream)
+	u = strings.TrimPrefix(u, "http://")
+	u = strings.TrimPrefix(u, "https://")
+	return strings.TrimRight(u, "/")
 }
 
 // orgScope returns the org slug used to namespace a project's registry images.

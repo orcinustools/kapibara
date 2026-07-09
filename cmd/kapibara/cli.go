@@ -144,6 +144,7 @@ func cliCommands() []*cobra.Command {
 		deployCmd(),
 		imageCmd(),
 		appCmd(),
+		upCmd(),
 		databaseCmd(),
 		deploymentCmd(),
 		secretCmd(),
@@ -417,7 +418,7 @@ func deployCmd() *cobra.Command {
 
 func appCmd() *cobra.Command {
 	cmd := &cobra.Command{Use: "app", Short: "Manage git/image applications"}
-	var project, name, buildType, repo, branch, dockerfile, image, domain string
+	var project, name, buildType, repo, branch, contextDir, dockerfile, image, domain string
 	var cpuLimit, memoryLimit, volumeSize string
 	var mounts, envPairs, secretKeys, command []string
 	var port int
@@ -445,7 +446,7 @@ func appCmd() *cobra.Command {
 			}
 			app, err := ensureApp(cmd.Context(), client, p.ID, appSpec{
 				Name: name, BuildType: buildType, RepoURL: repo, Branch: branch,
-				DockerfilePath: dockerfile, Image: image, Port: port, Domain: domain, TLS: tls,
+				ContextDir: contextDir, DockerfilePath: dockerfile, Image: image, Port: port, Domain: domain, TLS: tls,
 				CPULimit: cpuLimit, MemoryLimit: memoryLimit, VolumeSize: volumeSize, Mounts: mounts,
 				Env: env, SecretKeys: secretKeys, Command: command,
 			})
@@ -469,10 +470,11 @@ func appCmd() *cobra.Command {
 	}
 	deploy.Flags().StringVar(&project, "project", "", "project name or id")
 	deploy.Flags().StringVar(&name, "name", "", "application name")
-	deploy.Flags().StringVar(&buildType, "build", "image", "build type: dockerfile | nixpacks | image")
+	deploy.Flags().StringVar(&buildType, "build", "image", "build type: dockerfile | nixpacks | railpack | image")
 	deploy.Flags().StringVar(&repo, "repo", "", "git repo URL (dockerfile/nixpacks builds)")
 	deploy.Flags().StringVar(&branch, "branch", "", "git branch")
-	deploy.Flags().StringVar(&dockerfile, "dockerfile", "", "path to Dockerfile within the repo")
+	deploy.Flags().StringVar(&contextDir, "context-dir", "", "build context subdirectory within the repo (monorepos)")
+	deploy.Flags().StringVar(&dockerfile, "dockerfile", "", "path to Dockerfile (relative to the context dir)")
 	deploy.Flags().StringVar(&image, "image", "", "prebuilt image reference (build=image)")
 	deploy.Flags().IntVar(&port, "port", 0, "container port to expose")
 	deploy.Flags().StringVar(&domain, "domain", "", "ingress host/domain")
@@ -569,8 +571,8 @@ type project struct {
 }
 
 type appSpec struct {
-	Name, BuildType, RepoURL, Branch, DockerfilePath, Image, Domain string
-	Port                                                            int
+	Name, BuildType, RepoURL, Branch, ContextDir, DockerfilePath, Image, Domain string
+	Port                                                                        int
 	TLS                                                             bool
 	CPULimit, MemoryLimit, VolumeSize                               string
 	Mounts                                                          []string // "name:path"
@@ -645,7 +647,7 @@ func ensureApp(ctx context.Context, client *apiClient, projectID string, spec ap
 	}
 	body := map[string]any{
 		"name": spec.Name, "buildType": spec.BuildType,
-		"repoUrl": spec.RepoURL, "branch": spec.Branch, "dockerfilePath": spec.DockerfilePath,
+		"repoUrl": spec.RepoURL, "branch": spec.Branch, "contextDir": spec.ContextDir, "dockerfilePath": spec.DockerfilePath,
 		"image": spec.Image, "port": spec.Port, "domain": spec.Domain, "tls": spec.TLS,
 		"cpuLimit": spec.CPULimit, "memoryLimit": spec.MemoryLimit, "volumeSize": spec.VolumeSize,
 	}
