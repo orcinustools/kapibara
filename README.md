@@ -32,6 +32,14 @@ curl -fsSL https://raw.githubusercontent.com/orcinustools/kapibara/main/install.
 go install github.com/orcinustools/kapibara/cmd/kapibara@latest
 ```
 
+Update an installed binary in place (checksum-verified):
+
+```bash
+kapibara update              # self-update to the latest release
+kapibara update --check      # only report if an update is available
+kapibara update --path /usr/local/bin/kapibara --version v0.5.2
+```
+
 ## Build & run
 
 ```bash
