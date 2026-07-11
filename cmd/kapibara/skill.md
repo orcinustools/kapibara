@@ -1,65 +1,70 @@
-# Skill: Author an `orcinus.yml` deployment file
+# Skill: Deploy an app on Kapibara
 
-Use this when a user asks to deploy an app on **Kapibara / orcinus**. Produce an
-`orcinus.yml` — a standard **docker-compose** file annotated with `x-orcinus-*`
-hints that orcinus converts to Kubernetes objects — then deploy it.
+Use this when a user asks to deploy an app on **Kapibara** (which runs on the
+**orcinus** cluster engine). There are two ways — **prefer the first**:
 
-## How to use
+1. **`kapibara up`** (default) — deploy a single app straight from **source** (a
+   local directory or a Git repo). The **server** builds it (Railpack auto-detect
+   or a Dockerfile) and deploys it. No Dockerfile, no manifest, no Docker, no
+   `kubectl`.
+2. **`orcinus.yml`** (docker-compose) — only for **multi-service** stacks, wiring
+   **managed databases**, or **prebuilt/public** images.
 
-1. Inspect the project: language, how it starts, the port it listens on, and
-   whether it needs a database, cache, or persistent storage.
-2. Decide each service's image (see "Images & the registry" below):
-   - **Public image** → reference it directly (`nginx:alpine`, `postgres:16`).
-   - **Your own code** → build it, push to the Kapibara registry, and reference
-     `registry/<project>/<image>:tag`.
-3. Prefer **managed databases** over hand-rolled DB services (see below).
-4. Write `orcinus.yml` (see the template), then deploy:
+## Default path: `kapibara up`
+
+1. Inspect the project: language/stack, the **port** it listens on, the **env**
+   it needs, and whether it needs a database, cache, or persistent volume.
+2. Create any databases first (see "Managed databases"), then, from the app dir:
+
    ```bash
-   kapibara deploy --project <name> -f orcinus.yml     # streams the deploy log
+   kapibara up --project <p> --name <app>
    ```
-   The deploy is **asynchronous**: Kapibara applies it, then streams pod
-   readiness until ready or timeout. Follow later with
-   `kapibara deployment status <id>`.
 
-## Fastest path: `kapibara up` (local source — no Dockerfile or manifest)
+   That minimal form already: builds with **Railpack** (auto-detects Node, Go,
+   Python, Ruby, PHP, …), exposes it at **`<name>.<appsDomain>` with TLS**, and
+   defaults the **port to 3000** (also set as `$PORT`). Add flags as needed:
 
-When the server has **in-cluster builds** enabled (a BuildKit daemon; see
-"Images & the registry"), a single app can be shipped straight from a local
-directory — no `orcinus.yml`, no Docker, no Git push. The CLI packs the folder,
-uploads it, and the **server builds and deploys** it, streaming the log:
+   ```bash
+   kapibara up --project <p> --name <app> --build railpack \
+     --path . --port <port> --env-file .env --env KEY=VALUE --secret KEY \
+     --mount data:/var/lib/app --volume-size 1Gi --domain <host> --tls
+   ```
+
+   It packs the directory (honors `.dockerignore`, else `.gitignore`; always
+   excludes `.git`), uploads it, and **streams the server-side build + deploy
+   log**. Follow later with `kapibara deployment status <id>`.
+
+Notes:
+
+- `--build railpack` (default) needs no Dockerfile. `--build dockerfile` uses the
+  repo's Dockerfile (`--dockerfile <path>`, `--context-dir <subdir>` for a
+  subfolder).
+- **Git instead of local source**: same flags, but `kapibara app deploy --repo
+  <git-url> --build railpack …` (the server clones and builds).
+- **Monorepos** with several apps: deploy each app separately with
+  `--context-dir apps/<name>` — do **not** `up` the repo root (Railpack finds no
+  single start command and the container will crash-loop).
+- **Databases**: create them first and pass the connection string via `--env` /
+  `--env-file` (see "Managed databases").
+- Requires the server to have **in-cluster builds** enabled (a BuildKit daemon).
+  If it doesn't, either build an image yourself and push it (see "Images & the
+  registry"), or use `orcinus.yml` with a prebuilt image. Check with
+  `kapibara info`.
+
+## When to use `orcinus.yml` instead
+
+Author a compose file when the deploy is **more than one service** (e.g.
+frontend + API + worker together), uses **prebuilt/public images**, or you want a
+committed declarative manifest. Then:
 
 ```bash
-kapibara up --project <p> --name <app> --build railpack \
-  --path . --port <port> --domain <app>.<appsDomain> --tls \
-  --env KEY=VALUE --secret KEY --mount data:/var/lib/app --volume-size 1Gi
+kapibara deploy --project <name> -f orcinus.yml     # async; streams pod status
 ```
 
-- `--build railpack` auto-detects the stack (Node, Go, Python, Ruby, …), no
-  Dockerfile needed; `--build dockerfile` uses the repo's Dockerfile
-  (`--dockerfile <path>`, `--context-dir <subdir>` for monorepos).
-- Packing honors `.dockerignore` (else `.gitignore`) and always excludes `.git`.
-- For a **Git repo** instead of local source, use the same flags with
-  `kapibara app deploy --repo <git-url> --build railpack …`.
-- **Sensible defaults** (both `up` and `app deploy`): omit `--domain` and it
-  defaults to `<name>.<appsDomain>` with TLS; `up` also defaults `--port` to
-  `3000` and sets `$PORT`. Load a `.env` file with `--env-file .env` (individual
-  `--env KEY=VALUE` override it). So the minimal deploy is just:
-  `kapibara up --project <p> --name <app>`.
+`orcinus.yml` is a standard **docker-compose** file annotated with `x-orcinus-*`
+hints that orcinus converts to Kubernetes objects.
 
-Prefer `up`/`app deploy` for a **single service from source**. Author an
-`orcinus.yml` (below) for **multi-service** apps, managed-database wiring, or
-prebuilt/public images. Monorepos with several apps: deploy each app separately
-(`--context-dir apps/<name>`), not the repo root.
-
-## Default app domain
-
-If the user does not specify a host, derive one from the server's base apps
-domain: **`<app-name>.<appsDomain>`**. Discover it with `kapibara info`
-(`apps domain: apps.example.com` → `<app>.apps.example.com`). Only expose
-(ingress + host + TLS) services meant to be public; leave internal services
-without a host.
-
-## Rules that matter
+### Rules that matter
 
 - One `services:` entry per container. Standard compose keys work: `image`,
   `ports`, `environment`, `command`, `volumes`, `healthcheck`,
@@ -71,14 +76,14 @@ without a host.
 - Expose to the internet with `x-orcinus-expose: ingress` + `x-orcinus-host` +
   `x-orcinus-tls: letsencrypt`. The host must resolve to the cluster and
   ports 80/443 must be reachable for the ACME HTTP-01 challenge. Two public
-  services (e.g. frontend + API) each get their own host.
+  services (e.g. frontend + API) each get their own host. If the user gives no
+  host, derive `<service>.<appsDomain>` (`kapibara info` shows the apps domain).
 - Put sensitive env keys in `x-orcinus-secret` so they render as a Kubernetes
-  Secret instead of plain env. Never hard-code long-lived credentials you intend
-  to keep — mark them secret and rotate anything that leaked into a manifest.
+  Secret instead of plain env. Never hard-code long-lived credentials.
 - Named volumes become a PVC sized by `x-orcinus-volume-size`; stateful services
   use `x-orcinus-controller: statefulset`.
 
-## `x-orcinus-*` hints (per service)
+### `x-orcinus-*` hints (per service)
 
 | Key | Purpose |
 |---|---|
@@ -96,73 +101,7 @@ without a host.
 | `x-orcinus-image-pull-secret` | Pull secret name for private images |
 | `x-orcinus-ingress-class` | Ingress class (default cluster ingress) |
 
-## Images & the registry (build → push → reference)
-
-If the server has **in-cluster builds** enabled (a BuildKit daemon +
-`KAPIBARA_INCLUSTER_BUILD=1`), Kapibara builds from source itself — no Docker
-anywhere — via either `kapibara up` (local source, see above) or
-`kapibara app deploy --build railpack|dockerfile --repo <git-url>` (Git). It
-clones/unpacks, builds server-side, pushes to the registry, and deploys.
-
-Otherwise (default), Kapibara runs **in-cluster** and **cannot build from
-source**: build the image where you are and push it to Kapibara's registry
-gateway with one CLI command (it handles the registry login), then reference the
-short `registry/<project>/<image>:<tag>` form in the manifest.
-
-Two client-side build modes (for the no-in-cluster-build case):
-
-- **`kapibara image build`** — full Dockerfile, runs `RUN` steps. Needs Docker
-  on this machine. Monorepos: context is the repo root, `-f` picks the service
-  Dockerfile.
-  ```bash
-  kapibara image build --project worker --name api --tag v1 -f apps/api/Dockerfile .
-  ```
-- **`kapibara image pack`** — assemble a base image + a directory, in-process
-  (go-containerregistry), **no Docker**. For prebuilt artifacts: static sites,
-  Go binaries, compiled bundles (no `RUN`). Produces a `linux/amd64` image from
-  any host OS.
-  ```bash
-  kapibara image pack --project web --name site --tag v1 \
-    --base nginx:alpine --dir ./dist --dest /usr/share/nginx/html --port 80
-  ```
-
-Both push to the gateway and print the reference to use in `orcinus.yml`:
-
-```yaml
-    image: registry/<project>/<image>:<tag>
-```
-
-Kapibara rewrites that at deploy time to the full, org-scoped pull path
-(`<host>/registry/<org>/<project>/<image>:<tag>`) and the cluster pulls it back
-through the gateway — no pull secret needed. (Raw `docker push
-<host>/registry/...` also works if you can't use the CLI; `kapibara info` shows
-the host.)
-
-## Reuse existing managed databases
-
-If the project already has managed databases (created with `kapibara db create`),
-**do not declare DB services in the compose** — reference them by their service
-name and use the connection string from `kapibara db info <id>`:
-
-```yaml
-    environment:
-      DATABASE_URL: postgresql://<user>:<pass>@db:5432/app   # managed db named "db"
-      REDIS_URL: redis://redis:6379                          # managed db named "redis"
-    x-orcinus-secret: [DATABASE_URL]
-```
-
-Create them first if needed:
-
-```bash
-kapibara db create --project <p> --name db    --engine postgres --deploy
-kapibara db create --project <p> --name redis --engine redis    --deploy
-kapibara db info <id>   # copy the connection string
-```
-
-A backend that runs migrations on startup (e.g. Prisma) needs the DB reachable
-at deploy time — deploy the databases before (or in the same project as) the app.
-
-## Template — frontend + API + managed datastores
+### Template — frontend + API + managed datastores
 
 ```yaml
 services:
@@ -195,31 +134,69 @@ services:
 (`db` and `redis` are managed databases created with `kapibara db`, not compose
 services — that is why they are not declared here.)
 
-## Deploy & troubleshoot
+## Managed databases
+
+Prefer **managed databases** over hand-rolled DB services. Create them, then
+reference them by service name from the app (via `up`'s `--env`/`--env-file` or a
+compose `environment:`):
 
 ```bash
-kapibara deploy --project shop -f orcinus.yml        # async; streams pod status
-kapibara deployment status <id>                      # re-follow a deploy's log
+kapibara db create --project <p> --name db    --engine postgres --deploy
+kapibara db create --project <p> --name redis --engine redis    --deploy
+kapibara db info <id>   # copy the connection string
 ```
 
-Watch the streamed log for pod status:
+```
+DATABASE_URL=postgresql://<user>:<pass>@db:5432/app   # managed db named "db"
+REDIS_URL=redis://redis:6379                          # managed db named "redis"
+```
 
-- **`ImagePullBackOff` / `ErrImagePull`** → the image isn't pullable. Common
-  causes: you referenced `registry/...` but never pushed it; a typo in the
-  project/image/tag; or a public image name that doesn't exist. Verify with a
-  `docker pull` of the resolved path.
-- **Pod stuck `Pending`** → no schedulable node (resource/disk pressure) or a
-  PVC that can't bind.
-- **`CrashLoopBackOff`** → the app started but exited (bad config, DB
-  unreachable, failed migration). Check logs; confirm `DATABASE_URL`/host.
-- **TLS not `Ready`** → the host must resolve to the cluster and :80 be
-  reachable; check `orcinus kubectl get certificate`.
+A backend that runs migrations on startup (e.g. Prisma) needs the DB reachable
+at deploy time — deploy the databases **before** (or in the same project as) the
+app.
+
+## Images & the registry (only when the server can't build)
+
+If in-cluster builds are enabled, skip this — `up` / `app deploy` build on the
+server. Otherwise build the image where you are and push it to Kapibara's
+registry gateway (the CLI handles the login), then reference the short
+`registry/<project>/<image>:<tag>` form:
+
+- **`kapibara image build`** — full Dockerfile, runs `RUN` steps. Needs Docker.
+  ```bash
+  kapibara image build --project worker --name api --tag v1 -f apps/api/Dockerfile .
+  ```
+- **`kapibara image pack`** — assemble a base image + a directory in-process
+  (go-containerregistry), **no Docker**. For prebuilt artifacts (static sites, Go
+  binaries). Builds `linux/amd64` from any host OS.
+  ```bash
+  kapibara image pack --project web --name site --tag v1 \
+    --base nginx:alpine --dir ./dist --dest /usr/share/nginx/html --port 80
+  ```
+
+Both push to the gateway; reference `image: registry/<project>/<image>:<tag>` in
+`orcinus.yml`. Kapibara rewrites it at deploy time to the org-scoped pull path
+and the cluster pulls it back through the gateway — no pull secret needed.
+
+## Troubleshoot (watch the streamed deploy log)
+
+- **`CrashLoopBackOff`, exits immediately (exit 0)** → Railpack found no start
+  command (often a monorepo root with no root `start` script). Point `up` at the
+  actual app (`--context-dir apps/<name>`) or set `--command`.
+- **`CrashLoopBackOff`** (other) → app started but exited: bad config, DB
+  unreachable, failed migration. Check logs; confirm `DATABASE_URL`/host.
+- **`ImagePullBackOff` / `ErrImagePull`** → image not pullable: referenced
+  `registry/...` but never pushed, a typo, or a public image that doesn't exist.
+- **Pod stuck `Pending`** → no schedulable node (resource/disk pressure) or a PVC
+  that can't bind.
+- **TLS not `Ready`** → the host must resolve to the cluster and :80 be reachable;
+  check `orcinus kubectl get certificate`.
 
 ## Deploy checklist
 
-- [ ] Every reachable service has `ports:`.
-- [ ] Own-code images are built and **pushed** to the registry before deploy.
-- [ ] Public services have `x-orcinus-expose: ingress` + `x-orcinus-host` (+ `x-orcinus-tls`).
-- [ ] Credentials are listed in `x-orcinus-secret`; managed DBs referenced by name.
-- [ ] Stateful services use `statefulset` + `x-orcinus-volume-size`.
-- [ ] The DNS host resolves to the cluster.
+- [ ] Prefer `kapibara up` (single app from source); use `orcinus.yml` only for multi-service / prebuilt-image stacks.
+- [ ] The app's listen port matches `--port` (or `ports:`); it binds `$PORT` / `0.0.0.0`.
+- [ ] Managed databases created **first**; connection strings passed as env (secrets marked).
+- [ ] Public services get a host + TLS (auto `<name>.<appsDomain>`, or explicit).
+- [ ] Monorepo: deploy each app with `--context-dir`, not the repo root.
+- [ ] The DNS host resolves to the cluster (for TLS issuance).
