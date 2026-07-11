@@ -3,7 +3,8 @@
 </p>
 
 <p align="center">
-  <b>Self-hosted PaaS</b> (a Vercel / Heroku / Dokploy alternative) powered by the
+  <b>No Docker, no drama, just <code>kapibara up</code>.</b><br>
+  Self-hosted PaaS (a Vercel / Heroku / Dokploy alternative) on the
   <a href="https://github.com/orcinustools/orcinus"><b>Orcinus</b></a> cluster engine.
 </p>
 
