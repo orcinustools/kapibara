@@ -1,0 +1,36 @@
+<svg width="660" height="170" viewBox="0 0 660 170" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Kapibara — self-hosted PaaS on the Orcinus engine">
+  <defs>
+    <linearGradient id="badge" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#A9744F"/>
+      <stop offset="1" stop-color="#7C4E2E"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Mark: a chill capybara in a rounded badge -->
+  <g transform="translate(20,25)">
+    <rect x="0" y="0" width="120" height="120" rx="30" fill="url(#badge)"/>
+    <!-- ears -->
+    <ellipse cx="40" cy="34" rx="10" ry="12" fill="#5E3A22"/>
+    <ellipse cx="80" cy="34" rx="10" ry="12" fill="#5E3A22"/>
+    <!-- head -->
+    <ellipse cx="60" cy="66" rx="37" ry="33" fill="#D69C6E"/>
+    <!-- muzzle -->
+    <ellipse cx="60" cy="86" rx="24" ry="17" fill="#E7BE97"/>
+    <!-- eyes (relaxed) -->
+    <circle cx="46" cy="58" r="4.2" fill="#3B2416"/>
+    <circle cx="74" cy="58" r="4.2" fill="#3B2416"/>
+    <!-- nostrils -->
+    <ellipse cx="52" cy="84" rx="3" ry="4" fill="#5E3A22"/>
+    <ellipse cx="68" cy="84" rx="3" ry="4" fill="#5E3A22"/>
+    <!-- little bird friend on head -->
+    <g transform="translate(84,14)">
+      <circle cx="0" cy="0" r="7" fill="#F2C94C"/>
+      <circle cx="2.5" cy="-1.5" r="1.4" fill="#3B2416"/>
+      <path d="M6 0 L12 -2 L6 3 Z" fill="#E08A2E"/>
+    </g>
+  </g>
+
+  <!-- Wordmark -->
+  <text x="170" y="82" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="54" font-weight="700" fill="#A9744F">Kapibara</text>
+  <text x="172" y="116" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="19" font-weight="400" fill="#9A8578">Self-hosted PaaS on the Orcinus engine</text>
+</svg>
