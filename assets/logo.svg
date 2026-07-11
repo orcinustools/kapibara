@@ -32,5 +32,5 @@
 
   <!-- Wordmark -->
   <text x="170" y="82" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="54" font-weight="700" fill="#A9744F">Kapibara</text>
-  <text x="172" y="116" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="19" font-weight="400" fill="#9A8578">Self-hosted PaaS on the Orcinus engine</text>
+  <text x="172" y="116" font-family="'Segoe UI', Helvetica, Arial, sans-serif" font-size="20" font-weight="500" fill="#9A8578">No Docker, no drama, just <tspan font-family="'SF Mono', Menlo, Consolas, monospace" font-weight="600" fill="#A9744F">kapibara up</tspan></text>
 </svg>
