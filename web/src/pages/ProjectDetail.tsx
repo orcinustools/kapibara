@@ -4,9 +4,12 @@ import { ReactFlow, Background, Controls, MiniMap, type Node, type Edge } from "
 import "@xyflow/react/dist/style.css";
 import {
   Boxes, ChevronDown, Database as DatabaseIcon, Eye, EyeOff, FileCode2, GitBranch, Globe,
-  Layers, Loader2, Plus, Rocket, RotateCcw, ScrollText, Scaling, ScrollText as LogIcon, Server, Trash2, X,
+  Layers, Loader2, Plus, Rocket, RotateCcw, ScrollText, Scaling, ScrollText as LogIcon, Server, Terminal as TerminalIcon, Trash2, X,
 } from "lucide-react";
-import { api, streamText, secretsApi, backupsApi, previewApi, gitApi, saveAppEnv, saveAppDomain, type SecretSummary, type BackupSummary, type BackupCreate, type GitProvider, type GitRepo } from "../api";
+import { Terminal as XTerm } from "@xterm/xterm";
+import { FitAddon } from "@xterm/addon-fit";
+import "@xterm/xterm/css/xterm.css";
+import { api, streamText, getToken, secretsApi, backupsApi, previewApi, gitApi, saveAppEnv, saveAppDomain, type SecretSummary, type BackupSummary, type BackupCreate, type GitProvider, type GitRepo } from "../api";
 import { Card, Empty, ErrorBox, StatusPill } from "../ui";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -28,7 +31,7 @@ interface Project { id: string; name: string; orcinusProject: string; }
 // stays the primary view and no capability is lost in the revamp.
 type ManageKind =
   | "applications" | "databases" | "compose" | "deployments"
-  | "logs" | "config" | "domains" | "templates" | "backups" | "overview";
+  | "logs" | "terminal" | "config" | "domains" | "templates" | "backups" | "overview";
 
 const MANAGE: Record<ManageKind, { title: string; render: (id: string) => JSX.Element }> = {
   applications: { title: "Applications", render: (id) => <Applications projectId={id} /> },
@@ -36,6 +39,7 @@ const MANAGE: Record<ManageKind, { title: string; render: (id: string) => JSX.El
   compose: { title: "Docker Compose", render: (id) => <Compose projectId={id} /> },
   deployments: { title: "Deployments", render: (id) => <Deployments projectId={id} /> },
   logs: { title: "Logs", render: (id) => <Logs projectId={id} /> },
+  terminal: { title: "Terminal", render: (id) => <PodTerminal projectId={id} /> },
   config: { title: "Env & Secrets", render: (id) => <EnvSecrets projectId={id} /> },
   domains: { title: "Domains & TLS", render: (id) => <DomainsTLS projectId={id} /> },
   templates: { title: "Templates", render: (id) => <Templates projectId={id} /> },
@@ -139,6 +143,7 @@ export function ProjectDetailPage() {
           <DropdownMenuContent align="end">
             <DropdownMenuItem onClick={() => setManage("deployments")}><Rocket className="size-4" /> Deployments</DropdownMenuItem>
             <DropdownMenuItem onClick={() => setManage("logs")}><LogIcon className="size-4" /> Logs</DropdownMenuItem>
+            <DropdownMenuItem onClick={() => setManage("terminal")}><TerminalIcon className="size-4" /> Terminal</DropdownMenuItem>
             <DropdownMenuItem onClick={() => setManage("overview")}><Server className="size-4" /> Pods &amp; metrics</DropdownMenuItem>
             <DropdownMenuItem onClick={() => setManage("config")}><ScrollText className="size-4" /> Env &amp; Secrets</DropdownMenuItem>
             <DropdownMenuItem onClick={() => setManage("domains")}><Globe className="size-4" /> Domains &amp; TLS</DropdownMenuItem>
@@ -318,6 +323,7 @@ function UnitPanel({
           </div>
         )}
         <Button size="sm" variant="secondary" onClick={() => onLogs(slug(unit.name))}><LogIcon className="size-4" /> Logs</Button>
+        <Button size="sm" variant="secondary" onClick={() => onManage("terminal")}><TerminalIcon className="size-4" /> Terminal</Button>
 
         {unit.kind === "application" && (
           <div className="grid grid-cols-2 gap-2">
@@ -1255,6 +1261,105 @@ function Logs({ projectId }: { projectId: string }) {
       >
         {text || (following ? "Connecting…" : "Pick a service and follow logs.")}
       </pre>
+    </Card>
+  );
+}
+
+// PodTerminal opens an interactive shell into a pod over a WebSocket (xterm.js
+// ↔ the /projects/{id}/exec endpoint), with live resize.
+function PodTerminal({ projectId }: { projectId: string }) {
+  const [service, setService] = useState("");
+  const [connected, setConnected] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const hostRef = useRef<HTMLDivElement>(null);
+  const termRef = useRef<XTerm | null>(null);
+  const wsRef = useRef<WebSocket | null>(null);
+  const onWinResize = useRef<() => void>();
+
+  const disconnect = useCallback(() => {
+    if (onWinResize.current) window.removeEventListener("resize", onWinResize.current);
+    wsRef.current?.close();
+    wsRef.current = null;
+    setConnected(false);
+  }, []);
+
+  const connect = useCallback(() => {
+    disconnect();
+    setErr(null);
+    if (!hostRef.current) return;
+
+    termRef.current?.dispose();
+    const term = new XTerm({
+      fontSize: 13,
+      fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace",
+      cursorBlink: true,
+      theme: { background: "#0b0b0c", foreground: "#e5e5e5" },
+    });
+    const fit = new FitAddon();
+    term.loadAddon(fit);
+    term.open(hostRef.current);
+    fit.fit();
+    termRef.current = term;
+
+    const proto = location.protocol === "https:" ? "wss:" : "ws:";
+    const url =
+      `${proto}//${location.host}/api/v1/projects/${projectId}/exec` +
+      `?service=${encodeURIComponent(service)}&token=${encodeURIComponent(getToken())}`;
+    const ws = new WebSocket(url);
+    ws.binaryType = "arraybuffer";
+    wsRef.current = ws;
+
+    const sendResize = () => {
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ resize: { cols: term.cols, rows: term.rows } }));
+      }
+    };
+    ws.onopen = () => {
+      setConnected(true);
+      sendResize();
+      term.focus();
+    };
+    ws.onmessage = (ev) => {
+      const data = typeof ev.data === "string" ? ev.data : new TextDecoder().decode(ev.data);
+      term.write(data);
+    };
+    ws.onclose = () => setConnected(false);
+    ws.onerror = () => setErr("connection error — is the pod running and reachable?");
+
+    term.onData((d) => {
+      if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ data: d }));
+    });
+    const winResize = () => { fit.fit(); sendResize(); };
+    onWinResize.current = winResize;
+    window.addEventListener("resize", winResize);
+  }, [projectId, service, disconnect]);
+
+  useEffect(() => () => { disconnect(); termRef.current?.dispose(); }, [disconnect]);
+
+  return (
+    <Card title="Terminal">
+      <div className="mb-3 flex flex-wrap items-center gap-2">
+        <Input
+          placeholder="service name (blank = first pod)"
+          value={service}
+          onChange={(e) => setService(e.target.value)}
+          disabled={connected}
+          className="max-w-[260px]"
+        />
+        {connected ? (
+          <Button variant="destructive" onClick={disconnect}>Disconnect</Button>
+        ) : (
+          <Button onClick={connect}>Connect</Button>
+        )}
+        <span className="ml-auto text-xs text-muted-foreground">
+          {connected ? "connected" : "opens an interactive shell (bash/sh) in the pod"}
+        </span>
+      </div>
+      {err && <ErrorBox error={err} />}
+      <div
+        ref={hostRef}
+        className="h-[440px] w-full overflow-hidden rounded-md border border-border bg-[#0b0b0c] p-2"
+      />
     </Card>
   );
 }

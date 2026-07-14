@@ -182,6 +182,7 @@ func (s *Server) routes() {
 			r.Post("/projects/{projectID}/services/{service}/scale", s.handleScaleService)
 			r.Post("/projects/{projectID}/services/{service}/rollback", s.handleRollbackService)
 			r.Get("/projects/{projectID}/logs", s.handleLogs)
+			r.Get("/projects/{projectID}/exec", s.handleExec) // WebSocket pod terminal
 			r.Get("/projects/{projectID}/metrics", s.handleMetrics)
 
 			// Templates: one-click apps (M7).

@@ -85,6 +85,47 @@ func (c *Client) Exec(ctx context.Context, namespace, pod string, command []stri
 	})
 }
 
+// ExecTTY runs an interactive command in a pod container with a PTY: stdin is
+// read from stdin, combined stdout/stderr are written to out, and terminal
+// resize events are consumed from the resize channel. Used by the web terminal.
+func (c *Client) ExecTTY(ctx context.Context, namespace, pod, container string, command []string, stdin io.Reader, out io.Writer, resize <-chan TerminalSize) error {
+	req := c.Clientset.CoreV1().RESTClient().Post().
+		Resource("pods").Name(pod).Namespace(namespace).SubResource("exec").
+		VersionedParams(&corev1.PodExecOptions{
+			Container: container,
+			Command:   command,
+			Stdin:     stdin != nil,
+			Stdout:    true,
+			Stderr:    false, // merged into stdout under a TTY
+			TTY:       true,
+		}, scheme.ParameterCodec)
+
+	exec, err := remotecommand.NewSPDYExecutor(c.restCfg, "POST", req.URL())
+	if err != nil {
+		return err
+	}
+	return exec.StreamWithContext(ctx, remotecommand.StreamOptions{
+		Stdin:             stdin,
+		Stdout:            out,
+		Tty:               true,
+		TerminalSizeQueue: &termSizeQueue{ch: resize},
+	})
+}
+
+// TerminalSize is a requested PTY size (columns × rows).
+type TerminalSize struct{ Width, Height uint16 }
+
+// termSizeQueue adapts a channel of sizes to remotecommand.TerminalSizeQueue.
+type termSizeQueue struct{ ch <-chan TerminalSize }
+
+func (q *termSizeQueue) Next() *remotecommand.TerminalSize {
+	s, ok := <-q.ch
+	if !ok {
+		return nil
+	}
+	return &remotecommand.TerminalSize{Width: s.Width, Height: s.Height}
+}
+
 // StreamLogs streams (optionally following) the logs of a pod to w.
 func (c *Client) StreamLogs(ctx context.Context, namespace, pod string, follow bool, tail int64, w io.Writer) error {
 	opts := &corev1.PodLogOptions{Follow: follow}
