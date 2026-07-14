@@ -127,5 +127,7 @@ func bearerToken(r *http.Request) string {
 	if strings.HasPrefix(h, "Bearer ") {
 		return strings.TrimSpace(h[len("Bearer "):])
 	}
-	return ""
+	// Fallback for browser WebSocket/EventSource clients that cannot set the
+	// Authorization header: accept ?token=<session-jwt | kap_token>.
+	return strings.TrimSpace(r.URL.Query().Get("token"))
 }
