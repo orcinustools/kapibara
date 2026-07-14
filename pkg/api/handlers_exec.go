@@ -67,7 +67,7 @@ func (s *Server) handleExec(w http.ResponseWriter, r *http.Request) {
 	if sh := r.URL.Query().Get("shell"); sh != "" {
 		command = []string{sh}
 	} else {
-		command = []string{"/bin/sh", "-c", "export TERM=xterm-256color; exec /bin/bash 2>/dev/null || exec /bin/sh"}
+		command = []string{"/bin/sh", "-c", "export TERM=xterm-256color; if command -v bash >/dev/null 2>&1; then exec bash; else exec sh; fi"}
 	}
 
 	conn, err := execUpgrader.Upgrade(w, r, nil)
